@@ -1,5 +1,5 @@
 {
-  "name": "newrelic",
+  "name": "@breather/newrelic",
   "version": "1.39.0",
   "author": "New Relic Node.js agent team <nodejs@newrelic.com>",
   "licenses": [
@@ -124,6 +124,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/newrelic/node-newrelic.git"
+    "url": "https://github.com/breather/node-newrelic.git"
   }
 }
