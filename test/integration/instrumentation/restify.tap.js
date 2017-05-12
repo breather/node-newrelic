@@ -1,11 +1,11 @@
 'use strict'
 
-var path    = require('path')
-  , tap     = require('tap')
-  , test    = tap.test
-  , request = require('request')
-  , helper  = require('../../lib/agent_helper')
-  
+var tap     = require('tap')
+var test    = tap.test
+var request = require('request')
+var helper  = require('../../lib/agent_helper')
+var semver = require('semver')
+
 
 /*
  *
@@ -16,15 +16,16 @@ var METRIC = 'WebTransaction/Restify/GET//hello/:name'
 
 
 test("agent instrumentation of HTTP shouldn't crash when Restify handles a connection",
-     function (t) {
+  {skip: semver.satisfies(process.version, '0.8')},
+  function(t) {
   t.plan(8)
 
   var agent   = helper.instrumentMockedAgent()
-    , restify = require('restify')
-    , server  = restify.createServer()
-    
+  var restify = require('restify')
+  var server  = restify.createServer()
 
-  this.tearDown(function cb_tearDown() {
+
+  t.tearDown(function cb_tearDown() {
     helper.unloadAgent(agent)
     server.close()
   })
@@ -61,10 +62,11 @@ test("agent instrumentation of HTTP shouldn't crash when Restify handles a conne
   })
 })
 
-test("Restify should still be instrumented when run with SSL", function (t) {
+test("Restify should still be instrumented when run with SSL",
+  {skip: semver.satisfies(process.version, '0.8')},
+  function (t) {
   t.plan(8)
 
-  var suite = this
   helper.withSSL(function cb_withSSL(error, key, certificate, ca) {
     if (error) {
       t.fail("unable to set up SSL: " + error)
@@ -74,9 +76,9 @@ test("Restify should still be instrumented when run with SSL", function (t) {
     var agent   = helper.instrumentMockedAgent()
       , restify = require('restify')
       , server  = restify.createServer({key : key, certificate : certificate})
-      
 
-    suite.tearDown(function cb_tearDown() {
+
+    t.tearDown(function cb_tearDown() {
       helper.unloadAgent(agent)
       server.close()
     })

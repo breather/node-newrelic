@@ -71,16 +71,14 @@ describe("built-in http module instrumentation", function () {
     var agent
     var http
     var options
-    var callback
 
 
     beforeEach(function () {
       agent = helper.loadMockedAgent()
       var initialize = require('../../../../lib/instrumentation/core/http')
       http = {
-        request : function request(_options, _callback) {
+        request : function request(_options) {
           options = _options
-          callback = _callback
 
           var requested = new EventEmitter()
           requested.path = '/TEST'
@@ -112,20 +110,20 @@ describe("built-in http module instrumentation", function () {
 
   describe("when running a request", function () {
     var transaction
-    var fetchedStatusCode
-    var fetchedBody
     var agent
 
-    before(function (done) {
+
+    before(function(done) {
       http = require('http')
       agent = helper.instrumentMockedAgent()
 
       var external = http.createServer(function cb_createServer(request, response) {
         should.exist(agent.getTransaction())
 
-        response.writeHead(200,
-                           {'Content-Length' : PAYLOAD.length,
-                            'Content-Type'   : 'application/json'})
+        response.writeHead(200, {
+          'Content-Length': PAYLOAD.length,
+          'Content-Type': 'application/json'
+        })
         response.end(PAYLOAD)
       })
 
@@ -133,118 +131,197 @@ describe("built-in http module instrumentation", function () {
         transaction = agent.getTransaction()
         should.exist(transaction)
 
-        var req = http.request({port : 8321,
-                                host : 'localhost',
-                                path : '/status',
-                                method : 'GET'},
-                                function (requestResponse) {
-            if (requestResponse.statusCode !== 200) {
-              return done(requestResponse.statusCode)
-            }
-
-            requestResponse.setEncoding('utf8')
-            requestResponse.on('data', function (data) {
-              expect(data).equal(PAYLOAD)
+        if (/\/slow$/.test(request.url)) {
+          setTimeout(function() {
+            response.writeHead(200, {
+              'Content-Length': PAGE.length,
+              'Content-Type': 'text/html'
             })
-
-            response.writeHead(
-              200,
-              {'Content-Length' : PAGE.length,
-               'Content-Type'   : 'text/html'}
-            )
             response.end(PAGE)
-          })
+          }, 500)
+          return
+        }
 
-          req.on('error', function (error) {
-            return done(error)
-          })
+        makeRequest({
+          port: 8321,
+          host: 'localhost',
+          path: '/status',
+          method: 'GET'
+        }, function(err, statusCode, data) {
+          if (err) {
+            response.writeHead(500)
+            response.end(err.toString())
+            return
+          }
 
-          req.end()
+          if (statusCode !== 200) {
+            response.writeHead(501)
+            response.end('bad status code: ' + statusCode)
+          }
+
+          if (data !== PAYLOAD) {
+            response.writeHead(502)
+            response.end('bad payload')
+          }
+
+          response.writeHead(200, {
+            'Content-Length': PAGE.length,
+            'Content-Type': 'text/html'
+          })
+          response.end(PAGE)
+        })
       })
 
-      external.listen(8321, 'localhost', function () {
-        server.listen(8123, 'localhost', function () {
+      external.listen(8321, 'localhost', function() {
+        server.listen(8123, 'localhost', function() {
           // The transaction doesn't get created until after the instrumented
           // server handler fires.
           should.not.exist(agent.getTransaction())
-
-          fetchedBody = ''
-          var req = http.request({port   : 8123,
-                                  host   : 'localhost',
-                                  path   : '/path',
-                                  method : 'GET'},
-                                  function (response) {
-            if (response.statusCode !== 200) {
-              return done(response.statusCode)
-            }
-
-            fetchedStatusCode = response.statusCode
-
-            response.setEncoding('utf8')
-            response.on('data', function (data) {
-              fetchedBody = fetchedBody + data
-            })
-
-            response.on('end', function () {
-              return done()
-            })
-          })
-
-          req.on('error', function (error) {
-            return done(error)
-          })
-
-          req.end()
+          done()
         })
       })
     })
 
-    after(function () {
+    after(function() {
       helper.unloadAgent(agent)
     })
 
-    it("should successfully fetch the page", function () {
-      fetchedStatusCode.should.equal(200)
+    function makeRequest(params, cb) {
+      var req = http.request(params, function(res) {
+        if (res.statusCode !== 200) {
+          return cb(null, res.statusCode, null)
+        }
 
-      should.exist(fetchedBody)
-      expect(fetchedBody).equal(PAGE)
-    })
-
-    it("should record unscoped path stats after a normal request", function () {
-      var stats = agent.metrics.getOrCreateMetric('WebTransaction/NormalizedUri/*')
-      expect(stats.callCount).equal(2)
-    })
-
-    it("should indicate that the http dispatcher is in play", function (done) {
-      var found = false
-
-      agent.environment.toJSON().forEach(function cb_forEach(pair) {
-        if (pair[0] === 'Dispatcher' && pair[1] === 'http') found = true
+        res.setEncoding('utf8')
+        res.on('data', function(data) {
+          cb(null, res.statusCode, data)
+        })
       })
 
-      return done(found ? null : new Error('failed to find Dispatcher configuration'))
+      req.on('error', function(err) {
+        // If we aborted the request and the error is a connection reset, then
+        // all is well with the world. Otherwise, ERROR!
+        if (params.abort && err.code === 'ECONNRESET') {
+          cb()
+        } else {
+          cb(err)
+        }
+      })
+
+      if (params.abort) {
+        setTimeout(function() {
+          req.abort()
+        }, params.abort)
+      }
+      req.end()
+    }
+
+    describe('that is successful', function() {
+      var fetchedStatusCode = null
+      var fetchedBody = null
+      var refererUrl = 'https://www.google.com/search/cats?scrubbed=false'
+
+      before(function(done) {
+        transaction = null
+        makeRequest({
+          port: 8123,
+          host: 'localhost',
+          path: '/path',
+          method: 'GET',
+          headers: {
+            referer: refererUrl
+          }
+        }, function(err, statusCode, body) {
+          fetchedStatusCode = statusCode
+          fetchedBody = body
+          done(err)
+        })
+      })
+
+      after(function() {
+        fetchedStatusCode = null
+        fetchedBody = null
+      })
+
+      it("should successfully fetch the page", function() {
+        fetchedStatusCode.should.equal(200)
+
+        should.exist(fetchedBody)
+        expect(fetchedBody).equal(PAGE)
+      })
+
+      it("should capture a scrubbed version of the referer header", function () {
+        expect(transaction.trace.parameters['request.headers.referer']).to.equal('https://www.google.com/search/cats')
+      })
+
+      it("should record unscoped path stats after a normal request", function() {
+        var stats = agent.metrics.getOrCreateMetric('WebTransaction/NormalizedUri/*')
+        expect(stats.callCount).equal(2)
+      })
+
+      it("should indicate that the http dispatcher is in play", function() {
+        var found = false
+
+        agent.environment.toJSON().forEach(function cb_forEach(pair) {
+          if (pair[0] === 'Dispatcher' && pair[1] === 'http') found = true
+        })
+
+        if (!found) {
+          throw new Error('failed to find Dispatcher configuration')
+        }
+      })
+
+      it("should record unscoped HTTP dispatcher stats after a normal request",
+         function() {
+        var stats = agent.metrics.getOrCreateMetric('HttpDispatcher')
+        expect(stats.callCount).equal(2)
+      })
+
+      it("should associate outbound HTTP requests with the inbound transaction",
+         function() {
+        var stats = transaction
+                      .metrics
+                      .getOrCreateMetric('External/localhost:8321/http',
+                                         'WebTransaction/NormalizedUri/*')
+        expect(stats.callCount).equal(1)
+      })
+
+      it("should capture metrics for the last byte to exit as part of a response")
+      it("should capture metrics for the last byte to enter as part of a request")
+
+      it("should set transaction.port to the server's port", function() {
+        expect(transaction.port).equal(8123)
+      })
     })
 
-    it("should record unscoped HTTP dispatcher stats after a normal request",
-       function () {
-      var stats = agent.metrics.getOrCreateMetric('HttpDispatcher')
-      expect(stats.callCount).equal(2)
-    })
+    describe('that aborts', function() {
+      var fetchedStatusCode = null
+      var fetchedBody = null
 
-    it("should associate outbound HTTP requests with the inbound transaction",
-       function () {
-      var stats = transaction
-                    .metrics
-                    .getOrCreateMetric('External/localhost:8321/http',
-                                       'WebTransaction/NormalizedUri/*')
-      expect(stats.callCount).equal(1)
-    })
+      before(function(done) {
+        transaction = null
+        makeRequest({
+          port: 8123,
+          host: 'localhost',
+          path: '/slow',
+          method: 'GET',
+          abort: 15
+        }, function(err, statusCode, body) {
+          fetchedStatusCode = statusCode
+          fetchedBody = body
+          done(err)
+        })
+      })
 
-    it("should capture metrics for the last byte to exit as part of a response")
-    it("should capture metrics for the last byte to enter as part of a request")
+      after(function() {
+        fetchedStatusCode = null
+        fetchedBody = null
+      })
 
-    it("should set transaction.port to the server's port", function() {
-      expect(transaction.port).equal(8123)
+      it('should still finish the transaction', function() {
+        expect(transaction).to.exist
+        expect(transaction.isActive()).to.be.false
+      })
     })
   })
 
@@ -303,6 +380,10 @@ describe("built-in http module instrumentation", function () {
     })
 
     describe("for http.request", function () {
+      // this scenario is specifically broken on Node 5.7.1, see
+      // https://github.com/nodejs/node/issues/5555
+      if (!semver.satisfies(process.versions.node, '==5.7.1')) return
+
       it("should trace errors in listeners", function (done) {
         var server
         process.once('uncaughtException', function () {
@@ -314,10 +395,8 @@ describe("built-in http module instrumentation", function () {
         })
 
         server = http.createServer(function cb_createServer(request, response) {
-          response.writeHead(200,
-                             {'Content-Length' : PAYLOAD.length,
-                              'Content-Type'   : 'application/json'})
-          response.end(PAYLOAD)
+          response.writeHead(200, {'Content-Type': 'text/plain'})
+          response.end()
         })
 
         server.listen(8183, function () {
@@ -327,7 +406,6 @@ describe("built-in http module instrumentation", function () {
         })
       })
     })
-
   })
 
   describe('inbound http requests when cat is enabled', function () {
@@ -496,7 +574,7 @@ describe("built-in http module instrumentation", function () {
             encKey
           ))
           expect(data[0]).equal('456')
-          expect(data[1]).equal('/abc')
+          expect(data[1]).equal('WebTransaction//abc')
           expect(data[4]).equal(3)
           expect(data[5]).equal('789')
           expect(data[6]).equal(false)
@@ -545,7 +623,7 @@ describe("built-in http module instrumentation", function () {
 
     it('should fall back to partial name if transaction.name is not set', function(done) {
       var server = http.createServer(function(req, res) {
-        agent.getTransaction().partialName = '/abc'
+        agent.getTransaction().nameState.appendPath('/abc')
         res.end()
       })
 
@@ -558,7 +636,7 @@ describe("built-in http module instrumentation", function () {
             res.headers['x-newrelic-app-data'],
             encKey
           ))
-          expect(data[1]).equal('/abc')
+          expect(data[1]).equal('WebTransaction/Nodejs/abc')
           res.resume()
           server.close(done)
         })
@@ -667,12 +745,12 @@ describe("built-in http module instrumentation", function () {
       helper.runInTransaction(agent, function() {
         addSegment() // Add webSegment so everything works properly
         var transaction = agent.getTransaction()
-        transaction.partialName = '/xyz'
+        transaction.nameState.appendPath('/xyz')
         transaction.name = null
         transaction.referringPathHash = 'h/def'
         var pathHash = hashes.calculatePathHash(
           agent.config.applications()[0],
-          transaction.partialName,
+          transaction.nameState.getName(),
           transaction.referringPathHash
         )
 

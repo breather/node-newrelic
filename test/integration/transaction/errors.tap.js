@@ -5,8 +5,10 @@ var helper = require('../../lib/agent_helper')
 var API = require('../../../api')
 var util = require('util')
 
-test('errors in web transactions should gather the query params', function (t) {
-  var agent = helper.loadTestAgent(t)
+test('errors in web transactions should gather the query params', function(t) {
+  t.plan(10)
+
+  var agent = helper.loadTestAgent(t, { send_request_uri_attribute: true })
   var api = new API(agent)
   var http = require('http')
 
@@ -18,8 +20,7 @@ test('errors in web transactions should gather the query params', function (t) {
     res.end('success')
   }).listen(function () {
     var server = this
-    var url = 'http://localhost:' + server.address().port + '/'
-    url += '?some=param&data'
+    var url = 'http://localhost:' + server.address().port + '/?some=param&data'
     http.get(url, function (res) {
       t.equal(res.statusCode, 200, 'request should be successful')
       res.resume()
@@ -57,6 +58,7 @@ test('errors in web transactions should gather the query params', function (t) {
         expectedValue++
       }
     }
+
     t.equal(
       Object.keys(attributes.agentAttributes).length,
       expectedValue,
@@ -72,12 +74,13 @@ test('errors in web transactions should gather the query params', function (t) {
       true,
       'should have collected a query param without a value'
     )
-    t.end()
   })
 })
 
-test('multiple errors in web transactions should gather the query params', function (t) {
-  var agent = helper.loadTestAgent(t)
+test('multiple errors in web transactions should gather the query params', function(t) {
+  t.plan(19)
+
+  var agent = helper.loadTestAgent(t, { send_request_uri_attribute: true })
   var api = new API(agent)
   var http = require('http')
   var names = [
@@ -157,13 +160,13 @@ test('multiple errors in web transactions should gather the query params', funct
         'should have collected a query param without a value'
       )
     })
-
-    t.end()
   })
 })
 
-test('errors in web transactions should gather and merge custom params', function (t) {
-  var agent = helper.loadTestAgent(t)
+test('errors in web transactions should gather and merge custom params', function(t) {
+  t.plan(13)
+
+  var agent = helper.loadTestAgent(t, { send_request_uri_attribute: true })
   var api = new API(agent)
   var http = require('http')
 
@@ -236,19 +239,20 @@ test('errors in web transactions should gather and merge custom params', functio
       expectedValue,
       'should have collected the query, request, and response params'
     )
-    t.end()
   })
 })
 
-test('multiple errors in web tx should gather and merge custom params',  function (t) {
-  var agent = helper.loadTestAgent(t)
+test('multiple errors in web tx should gather and merge custom params', function(t) {
+  t.plan(23)
+
+  var agent = helper.loadTestAgent(t, { send_request_uri_attribute: true })
   var api = new API(agent)
   var http = require('http')
 
   agent.config.capture_params = true
 
   var errorData = [{
-    name: 'first error in tx test',
+    name: 'first error indexOf tx test',
     customParams: {
       preErrorReplace: 'yesssss',
       thisOneIsUnique: 1987,
@@ -343,7 +347,6 @@ test('multiple errors in web tx should gather and merge custom params',  functio
         'should have collected the query, request, and response params'
       )
     })
-    t.end()
   })
 })
 

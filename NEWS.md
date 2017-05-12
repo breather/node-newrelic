@@ -1,3 +1,642 @@
+
+### v1.39.0 (2017-05-01):
+* Updated the default value for `transaction_tracer.record_sql` to `obfuscated`.
+
+  This value was previously `off` by default. This change brings the New Relic
+  Node Agent defaults in line with other New Relic Agents.
+
+* Our when instrumentation better detects when a module is actually `when`.
+
+  Thanks to Pasi Eronen (@pasieronen) for the contribution!
+
+* Quiet a warning in our native promise instrumentation on Node 0.10.
+
+* Error messages are redacted in High Security Mode now.
+
+* New configurations were added for disabling some New Relic API methods. These
+  default to enabled and are all disabled in High Security Mode.
+
+  * `api.custom_parameters_enabled` controls `newrelic.addCustomParameters()`
+  * `api.custom_events_enabled` controls `newrelic.recordCustomEvent()`
+  * `api.notice_error_enabled` controls `newrelic.noticeError()`
+
+* Fixed a bug in the generic pool instrumentation affecting version 3.
+
+### v1.38.2 (2017-03-29):
+* When.js hooks similar to `Promise.onPotentiallyUnhandledRejection` now function
+  as intended.
+
+  Previously, hooks like `Promise.onPotentiallyUnhandledRejection` would not
+  work due to the way the agent wraps the promise constructor. When.js expects
+  these handles to be assigned directly onto the promise constructor, and our
+  wrapper was intercepting the assignment. The wrapper will now properly proxy
+  these values and assign them onto the original constructor, restoring the
+  proper behavior.
+
+* Express route parameters will now be properly attached to the corresponding
+  transaction.
+
+  Previously, our express instrumentation would read the route parameters and
+  place them on the segment responsible for matching the parameters. This
+  behavior did not place the parameters on the transaction that the segments
+  belonged to, causing the parameters to not show up properly on transaction
+  traces and transaction events.
+
+### v1.38.1 (2017-03-17):
+* Fixed issue with when.js instrumentation not preserving all properties on wrapped
+  Promise constructor.
+
+  Previously, the when.js instrumentation would cause an unhandled exception when private
+  methods on the Promise constructor were called (e.g. when adapting functions that do
+  not use promises).
+
+### v1.38.0 (2017-03-16):
+* We're excited to announce the addition of a new Node VMs page to the UI that provides a
+  curated view of the cpu, memory, garbage collection, and event loop metrics that we have
+  added over the past several releases of the node agent and native-metrics module.
+
+  For more information, see [our documentation.](https://docs.newrelic.com/docs/agents/nodejs-agent/supported-features/node-vms-statistics-page)
+
+* Added instrumentation of When.js promise library.
+
+ Previously, the transaction state could get lost when multiple promises resolved close
+  to each other.
+
+* Fixed name of environment variable in error message when configuration file cannot be found.
+  Thanks to @Maubic for the contribution!
+
+* Updated tests to work with the latest version of Node 7.
+
+### v1.37.1 (2017-02-16):
+* Agent now wraps `emit` on http request/response objects instead of relying
+  on listeners.
+
+* Fixed a bug in normalization rules when replacements do not maintain initial `/`.
+
+* Removed unused `yakaa` dependency.
+
+* Better de-duplication of errors when the same error instance is used multiple
+  times.
+
+* Server-side naming rules are now applied even when user defined ones have
+  matched.
+
+* Improved documentation for `newrelic.noticeError()` and `ignore_status_codes`
+  configuration.
+
+  The documentation now makes it clear that errors recorded using `noticeError()`
+  do not obey the `ignore_status_codes` configuration value.
+
+* Errors reported outside of a transaction now include their stack trace on the
+  error analytics page.
+
+* A potential stack overflow in trace serialization has been removed.
+
+* Fixed an issue with our Express and domain instrumentation related to a loss
+  of transaction state that could result in incorrect transaction names, traces,
+  and events.
+
+* Nested background transactions now report the correct number of metrics.
+
+### v1.37.0 (2017-02-08):
+* The agent now reports event loop metrics on supported platforms.
+
+  On node versions 0.12, 4, 6, and 7 the agent will now record the number of event loop
+  ticks per minute, and CPU time spent in each tick. You can read more about it on
+  [our docs site!](https://docs.newrelic.com/docs/agents/nodejs-agent/supported-features/node-vm-measurements)
+
+* The agent no longer creates a segment for each row returned from a PG query when the
+  pg-query-stream module is used.
+
+* Removed io.js from our test suite, since it has not been supported for some time.
+
+* Internal properties used in our promise instrumentation are now non-enumerable to
+  prevent unexpected keys showing up for clients.
+
+* Agent now uses safe stringification when encoding payloads in order to prevent an issue
+  with circular references.
+
+* Fixed issue with the agent holding the process open when retrying to connect to the
+  collector.
+
+* Quieted a log message warning users about their own settings.
+
+* Fixed typo in a log message.  Thanks to Dave Bobak (@davebobak) for the contribution.
+
+### v1.36.2 (2017-01-26):
+* Fixed issue with timing Redis operations when called without a callback.
+
+  Previously these operations would continue to be timed until the transaction ended, and
+  as a result reported incorrect times.
+
+* Transactions that result in a 404 HTTP error are now named "(not found)".
+
+  Previously these transactions were reported with no name (e.g. get /).
+
+* When the newrelic.js configuration file is not present, the agent now logs a message
+  to the console and no longer prevents the app from starting up.
+
+### v1.36.1 (2017-01-12):
+* Stop collecting URL parameters from the HTTP referer header
+
+  The Node agent collects the request headers during an error trace to help determine
+  the root cause of problems. The referer header is the URI that identifies the address
+  of the webpage that linked to the resource being requested. It is possible that
+  the referer URI may contain sensitive information in the request query parameters.
+  New Relic has found that the query parameters are not properly stripped during
+  the error trace. This update fixes this by stripping the query parameters from
+  the referer in the request header before sending this data to New Relic.
+
+  This release fixes [New Relic Security Bulletin NR17-01](https://docs.newrelic.com/docs/accounts-partnerships/accounts/security-bulletins/security-bulletin-nr17-01).
+
+* Improved logging of modules that did not get instrumented.
+
+### v1.36.0 (2016-12-21):
+* Added CPU metric gathering to Node.js versions <6.1
+
+  As of this release the agent will attempt to gather CPU usage metrics via the
+  optional `@newrelic/native-metrics` module.
+
+* Added additional memory usage classification metrics.
+
+  The agent will now report memory metrics that break down memory by its current
+  use.
+
+  For more information on these features, see [our documentation.](https://docs.newrelic.com/docs/agents/nodejs-agent/supported-features/node-vm-measurements)
+
+### v1.35.1 (2016-12-13):
+* Removed automatic installation of `@newrelic/native-metrics`.
+
+  Due to the way npm v3+ flatten dependencies, a bug in the version of npm
+  packaged with Node v5, and npm v1's ungraceful handling of scoped packages
+  we have opted to not automatically install this module.
+
+  If you would like to see native metrics for your application, you can add the
+  `@newrelic/native-metrics` module to your `package.json` and the Node Agent
+  will automatically pick it up.
+
+* Corrected attribution of the Bluebird patch in the last release's notes.
+
+  Thanks to Matt Lavin (@mdlavin) for this correction!
+
+### v1.35.0 (2016-12-12):
+* The agent will now report garbage collection statistics on supported
+  platforms.
+
+  On node versions 0.10, 0.12, 4, 6, and 7 the agent will now record the time
+  spent in, the number of, and type of garbage collection cycles. You can read
+  more about it on [our docs
+  site!](https://docs.newrelic.com/docs/agents/nodejs-agent/supported-features/node-vm-measurements)
+
+* The agent no longer double counts MySQL query times when using a connection
+  pool.
+
+  Previously, when using a pool of connections a query done through the pool
+  would be recorded as the time it took on the pool, as well as the connection,
+  effectively counting the time twice.  This is no longer the case.
+
+* The agent will no longer lose transaction state across Bluebird's `promise.nodify`.
+
+  Thanks to Matt Lavin (@mdlavin) for this contribution!
+
+### v1.34.0 (2016-11-10):
+
+* The agent now collects CPU metrics when running under Node 6.1.0 and higher.
+
+  Node 6.1.0 introduced an API to get CPU time usage of the running Node process.
+  We are now collecting this data as new metrics.
+
+* The agent now has a separate configuration for audit logging.
+
+  Previously the data that the agent sends to the collector was logged only in trace
+  logging mode, making the logs unnecessarily large and noisy.  The agent can now include
+  this data independent of the logging level using separate configuration settings.
+
+* A new API method addCustomParameters() has been added to allow adding multiple custom
+  parameters at once.  Thanks to Austin Peterson (@AKPWebDesign) for this contribution!
+
+* The shutdown() API now waits for connection to collect pending data.
+
+  When a flag to collect pending data is provided to the shutdown() method, the agent now
+  ensures a connection to the collector has been established.  This is useful when
+  the Node process is short-lived, such as in AWS Lambda.
+
+* Updated tests to run on Node 7.
+
+  Node 7 is officially supported as of the previous release, v1.33.0.
+
+* The setIgnoreTransaction() API now works for background transactions.
+
+* Fixed issue with Synthetics result not displaying a link to the corresponding
+  transaction trace.
+
+* Added running the nsp (Node Security Platform) tool to the test suite to help with
+  detecting security-related vulnerabilities.
+
+### v1.33.0 (2016-10-31):
+
+* The agent now collects database instance information for Memcached operations.
+  This information (database server and database name) is displayed in transaction
+  traces and slow query traces.
+
+* socket.io long-polling requests are now ignored by default.
+
+  Collecting metrics for these requests is typically not desirable since they are
+  frequent and do not represent business transactions.  Previously we recommended adding
+  an ignore rule manually.  Now it is included by default.
+
+* Improved test coverage for Postgres and MongoDB instrumentations.
+
+### v1.32.0 (2016-10-20):
+
+* The agent now collects database instance information for MySQL and MongoDB
+  operations. This information (database server and database name) is displayed in
+  transaction traces and slow query traces.
+
+* Datastore instance configuration can now be done through environment
+  variables.  These can be set through `NEW_RELIC_DATASTORE_INSTANCE_REPORTING_ENABLED`
+  and `NEW_RELIC_DATASTORE_DATABASE_NAME_REPORTING_ENABLED`
+
+* The agent will no longer crash the process when an express param handler is
+  executed when a transaction is not active.
+
+### v1.31.0 (2016-10-12):
+
+* The agent now collects database instance information for PostgreSQL and Redis
+  operations.  This information (database server and database name) is displayed in
+  transaction traces and slow query traces.
+
+### v1.30.5 (2016-10-04):
+
+* Fixed issue with aborted requests causing the agent to crash in some cases.
+
+  Previously the agent would crash when the client request aborted before Express server
+  sent a response and encountered an error.
+
+* Upgraded integration tests to work with the latest version of node-tap.
+
+### v1.30.4 (2016-09-27):
+
+* Improved instrumentation of native promises.
+
+  Native promises now use the same instrumentation as Bluebird, making
+  instrumentation easier to maintain and more consistent across libraries.
+
+* Fixed issue with reloading normalization rules from the server.
+
+  Upon reset, the agent will clear the existing naming rules, removing any
+  vestigial rules that may have changed or been disabled.
+
+* Fixed issue with key transactions Apdex metric.
+
+  Key transactions now effect the global Apdex metric according to their own
+  ApdexT instead of the default ApdexT value.
+
+* Fixed issue with closing transactions when the request is aborted.
+
+  Previously, aborted requests would result in the transaction remaining open
+  indefinitely. Now the transaction will be correctly finished and its resources
+  freed.
+
+* Fixed format of external calls metric.
+
+  External service URLs will now be formatted the same as they are in the
+  originating application.
+
+### v1.30.3 (2016-09-14):
+
+* Published with npm v2.
+
+### v1.30.2 (2016-09-13):
+
+* Added instrumentation of the param() function in Express.
+
+  The agent will now create metrics and transaction segments when the Express param()
+  function is called as a part of a route.  This also fixes an issue with transaction
+  naming when the HTTP response is ended within a param() method.
+
+* Fixed an issue with naming Express transactions that result in 404 errors.
+
+  Previously transactions were not always correctly normalized for URLs that caused
+  404 errors. The transactions will now always be reported with the same normalized name
+  (e.g. "get /").
+
+* Fixed instrumentation of Express v4.0 - v4.5.
+
+  Previously transactions were not correctly named on older versions of Express 4.
+
+* Minor upates to logging.
+
+### v1.30.1 (2016-09-01):
+
+* The `shutdown` method is now on the stub API.
+
+  Previously when the agent was disabled the stub API passed back on require
+  did not have the `shutdown` method.  Thanks goes to Vlad Fedosov (@StyleT) for
+  this contribution!
+
+* Global timers will now be wrapped correctly regardless of being wrapped by
+  something else.
+
+  The logic to check whether to wrap the `global` timers was looking to see if
+  the `global` timers were the same function reference as the ones in the
+  `timers` module.  This would break in cases where either the `global` or
+  `timers` functions had been wrapped.
+
+* Director instrumentation now correctly handles the case of null route handlers
+  being passed in.
+
+  Previously the agent's director instrumentation would crash in cases of null
+  route handlers in director.
+
+### v1.30.0 (2016-08-25):
+
+* A number of improvements and fixes to transaction naming rules.
+
+  Added attributes `terminate_chain`, `replace_all`, and `precedence` to allow more
+  control over how naming rules are executed.  Please see the updated documentation in
+  our README file.
+
+  The order in which naming rules are executed can now be reversed with a feature flag
+  `reverse_naming_rules`.
+
+  When applying naming rules, the regular expression matching is now case insensitive.
+
+  We have added a tool for testing naming rules.  When the agent is installed, the tool
+  can be run in terminal by executing `node node_modules/.bin/newrelic-naming-rules`.
+
+  We have also improved our trace logging around transaction naming.
+
+* Fixed issue with reporting errors from domains.
+
+  When an error is handled by using the `error` event of the domain, it is no longer
+  reported as an uncaught exception.
+
+* Added trace logging to track number of transactions and segments in progress, and to
+  better track segments created with the Express instrumentation.
+
+* Fixed mysql2 tests that were not being run correctly.
+
+### v1.29.0 (2016-08-03):
+
+* Reworked the SQL parser to handle new lines in the query.
+
+  Previously the agent would have difficulty classifying queries with new lines
+  in them.  Thanks to Libin Lu (@evollu) for the fix!
+
+* Postgres instrumentation is now compatible with inputs with text getter attributes.
+
+  Thanks again to Libin Lu (@evollu) for the fix!
+
+* Domain error handlers will now be scoped to the transaction the error occurred in.
+
+  Previously, the `'error'` event handlers would not be scoped to a transaction causing
+  our API methods to not associate data correctly (e.g. using `noticeError`
+  would not associate the error with the transaction and would instead be
+  unscoped).
+
+### v1.28.3 (2016-07-13):
+
+* Removed excessive segment creation from PG instrumentation.
+
+  For queries with many results we would create a segment for each result. This
+  would result in excessive object allocation and then cause harsh GC thrashing.
+
+* Improved agent startup speed by ~10% by simplifying environment checks.
+
+  Removed prolific `fs.exists` and `fs.stat` checks, instead simply handling the
+  error for mis-used files which greatly reduces disk access.
+
+* Fixed a bug in agent connect that could cause an identity crisis under
+  specific use cases.
+
+  When using the agent with multiple app names, transaction information could be
+  misattributed to other services if they share the same first app name. This
+  resolves that by using all of the host names to uniquely identify the agent.
+
+* Added slightly more trace-level logging around the creation of segments.
+
+* Added examples for using the `newrelic.createBackgroundTransaction` method in
+  a number of different use cases.
+
+
+### v1.28.2 (2016-07-07):
+
+* Director instrumentation that will now name the transaction correctly,
+  as well as create segments corresponding to the handlers registered
+  with director.
+
+* Transaction naming refactor - this should clear up some inconsistent naming
+  issues in our router instrumentations.
+
+  Previously the instrumentation was tasked with the maintenance of the
+  transaction state name, now this has been abstracted into its own class to be
+  used by instrumentations.
+
+* Express instrumentation refactored to scope transaction storage to the
+  incoming request object.
+
+  Previously the express instrumentation used a stack to track which router was
+  expecting middleware to finish and keep track of which transaction is being
+  executed. The new implementation has a stronger guarantee on scoping work to
+  the correct transaction.
+
+* The agent now uses the correct units for slow queries - this fixes and issue
+  where query traces in the databases tab were slower than the reported maximum.
+
+
+### v1.28.1 (2016-06-15):
+
+* The following attributes are now sent to Insights along with transaction events:  databaseDuration, databaseCallCount.
+
+* Fixed a few issues with the Express instrumentation.
+
+  Middleware functions mounted with a path variable now generate the correct middleware metrics.  Routers mounted using route methods now generate the correct trace segments and times.  Routers mounted on root path are now not included in trace when they contain no matching routes.
+
+* Updated Redis instrumentation to work with version 2.x of the redis module.
+
+* Improvements to error tracking on systems that have a lot of errors.
+
+* Other minor changes to tests and logging.
+
+### v1.28.0 (2016-05-25):
+
+* Express middleware metrics are now enabled by default.
+
+* The following attributes are now sent to Insights along with transaction events:
+  externalDuration, externalCallCount, and queueDuration.
+
+* Custom SSL certificates (from the agent configuration) are now used even when a proxy
+  is not explicitly defined. This is useful in some environments that use an implicit
+  proxy for all network traffic.
+
+### v1.27.2 (2016-05-05):
+
+* Fixed duplicated external transactions for `https` requests in Node > 0.10.
+
+  Any external transaction that used the `https` module to make the request
+  would appear twice in transaction traces due to `https.request` internally
+  using `http.request`. This has now been resolved.
+
+* Updated eslint dev dependency to 2.9.0 (was 0.24.1).
+
+* Fixed an issue with transaction naming precedence.
+
+  Custom naming of transactions will no longer be replaced by names generated by
+  the instrumentation.
+
+* Fixed tests which broke under Node 6.0.
+
+  Node 6.0.0 changed some messaging and internal functionality which our tests
+  were asserting on. These tests have been updated to work with either the new
+  version or the older ones.
+
+* Fixed installing GCC 5 in Travis for testing native modules in Node >= 3.0.
+
+  Starting in Node 3.0, native modules were compiled with C++11 features
+  enabled. The version of GCC preinstalled on Travis was too old to support that
+  so we now manually install GCC 5 and set it as the system compiler.
+
+* Fixed metrics that were being scoped to themselves.
+
+  Some metrics were scoped to themselves causing a strange visual glitch in the
+  RPM UI. This self-scoping has been removed.
+
+* Added tests for transaction naming with parallel requests in Express.
+
+### v1.27.1 (2016-05-03):
+
+* Fixed issue with checking listener count for uncaughtException and unhandledRejection
+  global events.
+
+* Fixed a number of issues with promise instrumentation of Bluebird.
+
+### v1.27.0 (2016-04-21):
+
+* Added a .npmignore file to exclude non-essential files.
+
+  The agent will now omit tests and examples on install from npm, drastically
+  improving download times.  Thanks to Serge Havas (@Sinewyk) for the
+  contribution!
+
+* The agent now properly checks for custom SSL certificates.
+
+  The check previously was falsely positive if there was an empty list of custom
+  certificates.  This caused red herrings to be admitted into the debug logs.
+  Thanks to Seth Shober (@sethshober) for the fix!
+
+* Reworked promise instrumentation to be more reliable and reusable.
+
+  Promise instrumentation has been rewritten to be applicable to any A+
+  compliant promise library.  This change brings more consistent
+  instrumentation of Bluebird promises.
+
+  This change also allows users to see the execution order of chained promises
+  in their Transaction Traces.  This is an opt-in process and can be achieved by
+  setting `feature_flag.promise_segments` to true in the agent config.
+
+* Promise error handling is now more consistent.
+
+  Previously the agent would notice errors being emitted on 'unhandledRejection'
+  regardless of other listeners.  Errors coming in on the 'unhandledRejection'
+  event will not be recorded if there are handlers for the event - this is more
+  in line with our error handling practices in other instrumentations.
+
+* Logging has been reworked to reduce CPU overhead.
+
+  The check to see if a logging call was valid happened fairly late in the
+  logic, causing unnecessary work to be done regardless of logger state.  This
+  has been rectified, netting a large decrease in CPU overhead.
+
+### v1.26.2 (2016-04-07):
+
+* Added ioredis instrumentation.
+
+  Big thanks to Guilherme Souza (@guilhermef) for the contribution!
+
+* Added a new shutdown call to the public API.
+
+  Thanks to @echmykhun for the contribution!
+
+  The new shutdown API call will gracefully stop the agent.  It can optionally
+  harvest any pending data waiting to be sent to the New Relic servers before
+  shutting down.
+
+  To read more about this new API, please read our README, or visit our
+  [docs page](https://docs.newrelic.com/docs/agents/nodejs-agent/supported-features/nodejs-agent-api#shutdown).
+
+* Fixed an issue in the express instrumentation related to inactive/lost
+  transaction state.
+
+  Thanks to Jacob Page (@DullReferenceException) for submitting this fix.
+
+  Previously, the agent would crash if there was no active transaction when
+  an Express middleware would handle the request.
+
+* Added support for truncated segment notifiers.
+
+  Segments related to work that happens after a transaction has finished will
+  now be labeled as Truncated in the UI.
+
+* The agent now uses MongoDB's APM API for its instrumentation.
+
+  Method discovery for instrumentation is now done through MongoDB's APM API in
+  newer versions of the MongoDB driver.
+
+### v1.26.1 (2016-03-30):
+
+* Added capturing errors from the unhandledRejection global event.
+
+  If a promise is rejected with an error, and the error is not handled, the error
+  will now be reported to New Relic.
+
+* Fixed issue with attaching an event handler every time Express was required.
+
+* Fixed issue with chained promises losing context.
+
+  Previously the transaction state was getting lost when an error was thrown early in
+  a promise chain.
+
+* Fixed issue with the agent crashing when an http Server did not have
+  the address() getter.
+
+* Fixed issue with Express instrumentation when a wrapped layer object was
+  missing a method.
+
+* Added more logging around the CAT feature.
+
+### v1.26.0 (2016-03-23):
+
+* Express instrumentation has been fundamentally reworked.
+
+  This refactor includes a few bug fixes around error handling and transaction
+  naming, as well as optional higher resolution traces.
+
+  The agent will not report errors handled in an error handler it is monitoring - this
+  is more in line with how the agent does error handling in other contexts.
+
+  The agent will now name transactions correctly when an application responds
+  from a middleware.
+
+  Setting `feature_flag.express_segments` to true in the agent config will
+  make the agent report the amount of time spent in each individual middleware per request
+
+### v1.25.5 (2016-03-09):
+
+* Added instrumentation of Bluebird promises.
+
+  Previously, the transaction state could get lost when multiple promises resolved
+  close to each other.
+
+* Fixed issue with PostgreSQL native instrumentation.
+
+  Previously, calling `require('pg').native` more than once was causing
+  the agent to crash.
+
+* Fixed issue with hapi instrumentation not returning value from Server.connection().
+
+* Various improvements to tests to make them more stable.
+
 ### v1.25.4 (2016-02-24):
 
 * Added more HTTP request/response parameters to transactions.

@@ -6,15 +6,15 @@ var request = require('request')
 var http = require('http')
 var skip = require('./skip')
 
-test('app should be at top of stack when mounted', {skip: skip()}, function (t) {
+test('app should be at top of stack when mounted', {skip: skip()}, function(t) {
   var agent = helper.instrumentMockedAgent()
   var express = require('express')
 
-  this.tearDown(function cb_tearDown() {
+  t.tearDown(function cb_tearDown() {
     helper.unloadAgent(agent)
   })
 
-  t.plan(2)
+  t.plan(1)
 
   var main = express()
   var child = express()
@@ -28,15 +28,9 @@ test('app should be at top of stack when mounted', {skip: skip()}, function (t) 
   })
 
   main.use(child)
-
-  t.equal(
-    main._router.stack.length,
-    4,
-    '4 middleware functions: query parser, Express, child, error trapper'
-  )
 })
 
-test('app should be at top of stack when mounted', {skip: skip()}, function (t) {
+test('app should be at top of stack when mounted', {skip: skip()}, function(t) {
   var agent = helper.instrumentMockedAgent()
   var express = require('express')
   var main = express()
@@ -46,7 +40,7 @@ test('app should be at top of stack when mounted', {skip: skip()}, function (t) 
   var router2 = new express.Router()
   var server = http.createServer(main)
 
-  this.tearDown(function() {
+  t.tearDown(function() {
     helper.unloadAgent(agent)
     server.close()
   })
@@ -63,11 +57,17 @@ test('app should be at top of stack when mounted', {skip: skip()}, function (t) 
 
   t.plan(10)
 
+  // store finished transactions
+  var finishedTransactions = {}
+  agent.on('transactionFinished', function(tx) {
+    finishedTransactions[tx.id] = tx
+  })
+
   server.listen(4123, function() {
     request.get('http://localhost:4123/myApp/myChild/app', function(err, res, body) {
       t.notOk(err)
       t.equal(
-        body,
+        finishedTransactions[body].nameState.getName(),
         'Expressjs/GET//:app/:child/app',
         'should set partialName correctly for nested apps'
       )
@@ -76,7 +76,7 @@ test('app should be at top of stack when mounted', {skip: skip()}, function (t) 
     request.get('http://localhost:4123/myApp/nestedApp  ', function(err, res, body) {
       t.notOk(err)
       t.equal(
-        body,
+        finishedTransactions[body].nameState.getName(),
         'Expressjs/GET//:app/nestedApp/',
         'should set partialName correctly for deeply nested apps'
       )
@@ -85,7 +85,7 @@ test('app should be at top of stack when mounted', {skip: skip()}, function (t) 
     request.get('http://localhost:4123/myApp/myChild/router', function(err, res, body) {
       t.notOk(err)
       t.equal(
-        body,
+        finishedTransactions[body].nameState.getName(),
         'Expressjs/GET//:router/:child/router',
         'should set partialName correctly for nested routers'
       )
@@ -94,16 +94,17 @@ test('app should be at top of stack when mounted', {skip: skip()}, function (t) 
     request.get('http://localhost:4123/myApp/nestedRouter', function(err, res, body) {
       t.notOk(err)
       t.equal(
-        body,
+        finishedTransactions[body].nameState.getName(),
         'Expressjs/GET//:router/nestedRouter/',
         'should set partialName correctly for deeply nested routers'
       )
     })
 
+
     request.get('http://localhost:4123/foo/bar', function(err, res, body) {
       t.notOk(err)
       t.equal(
-        body,
+        finishedTransactions[body].nameState.getName(),
         'Expressjs/GET//:foo/:bar',
         'should reset partialName after passing through a router without a matching route'
       )
@@ -111,7 +112,7 @@ test('app should be at top of stack when mounted', {skip: skip()}, function (t) 
   })
 
   function respond(req, res) {
-    res.send(agent.getTransaction().partialName)
+    res.send(agent.getTransaction().id)
   }
 })
 
@@ -129,7 +130,7 @@ test('should not pass wrong args when transaction is not present', {skip: skip()
   main.use('/', router)
   main.use('/', router2)
 
-  this.tearDown(function() {
+  t.tearDown(function() {
     helper.unloadAgent(agent)
     server.close()
   })

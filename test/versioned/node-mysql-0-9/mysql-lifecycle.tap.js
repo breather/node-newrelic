@@ -7,10 +7,10 @@ var params = require('../../lib/params')
 
 
 test('MySQL instrumentation should find the MySQL call in the transaction trace',
-     function (t) {
+     function(t) {
   t.plan(25)
 
-  helper.bootstrapMySQL(function cb_bootstrapMySQL(error, app) {
+  helper.bootstrapMySQL(function cb_bootstrapMySQL(error) {
     if (error) {
       t.fail(error)
       return t.end()
@@ -27,7 +27,7 @@ test('MySQL instrumentation should find the MySQL call in the transaction trace'
     })
     t.ok(client, 'Client should be created OK.')
 
-    this.tearDown(function cb_tearDown() {
+    t.tearDown(function cb_tearDown() {
       client.end(function cleanup(error) {
         if (error) t.fail(error)
 
@@ -37,7 +37,7 @@ test('MySQL instrumentation should find the MySQL call in the transaction trace'
 
     t.notOk(agent.getTransaction(), 'no transaction should be in play yet.')
     helper.runInTransaction(agent, function transactionInScope() {
-      client.query('SELECT * FROM test WHERE id = ?', [1], function (error, rows) {
+      client.query('SELECT * FROM test WHERE id = ?', [1], function(error, rows) {
         if (error) {
           t.fail(error)
           return t.end()
@@ -51,82 +51,89 @@ test('MySQL instrumentation should find the MySQL call in the transaction trace'
                  'mysql driver should still work (found value)')
 
         client.query('INSERT INTO test (test_value) VALUE (\'raxjambles\')',
-                     function (error) {
+                     function(error) {
           if (error) {
             t.fail(error)
             return t.end()
           }
 
           t.ok(agent.getTransaction(), 'transaction should still be visible')
-          client.query('SELECT COUNT(*) AS num_rows FROM test', function (error, rows) {
+          client.query('SELECT COUNT(*) AS num_rows FROM test', function(error, rows) {
             if (error) {
               t.fail(error)
               return t.end()
             }
 
-            var transaction = agent.getTransaction()
-            t.ok(transaction, 'transaction should still be visible')
-
-            t.equals(rows.length, 1, 'there should be one row')
-            var row = rows[0]
-            t.equals(row.num_rows, 2, 'should have found 2 rows')
-
-            transaction.end()
-
-            var trace = transaction.trace
-            t.ok(trace, 'trace should exist')
-            t.ok(trace.root, 'root element should exist.')
-            t.equals(trace.root.children.length, 1, 'There should be only one child.')
-
-            var selectSegment = trace.root.children[0]
-            t.ok(selectSegment, 'trace segment for first SELECT should exist')
-            t.equals(selectSegment.name, 'Datastore/statement/MySQL/test/select',
-                     'should register as SELECT')
-            t.equals(selectSegment.children.length, 2,
-                     'SELECT should have 2 children')
-
-            var insertSegment = selectSegment.children[1].children[0]
-            t.ok(insertSegment, 'trace segment for INSERT should exist')
-            t.equals(insertSegment.name, 'Datastore/statement/MySQL/test/insert',
-                     'should register as INSERT')
-
-            t.equals(
-              insertSegment.children.length,
-              1,
-              'should only have a callback segment'
-            )
-
-            t.equals(
-              insertSegment.children[0].name,
-              'Callback: anonymous',
-              'callback segment should have expected name'
-            )
-
-            var countSegment = insertSegment.children[0].children[0]
-            t.ok(countSegment, 'trace segment for SELECT COUNT(*) should exist')
-            t.equals(countSegment.name, 'Datastore/statement/MySQL/test/select',
-                     'should register as SELECT')
-
-           t.equals(
-             countSegment.children.length,
-             1,
-             'should only have a callback segment'
-           )
-
-           t.equals(
-             countSegment.children[0].name,
-             'Callback: anonymous',
-             'callback segment should have expected name'
-           )
-
-            var wrapCallback = countSegment.children[0]
-            t.equals(wrapCallback.children.length, 0,
-                     'SELECT COUNT should leave us here at the end')
-
-            t.end()
+            // need to inspect on next tick, otherwise calling transaction.end() here
+            // in the callback (which is its own segment) would mark it as truncated
+            // (since it has not finished executing)
+            process.nextTick(inspect.bind(null, rows))
           })
         })
       })
     })
-  }.bind(this))
+
+    function inspect(rows) {
+       var transaction = agent.getTransaction()
+
+       t.ok(transaction, 'transaction should still be visible')
+
+       t.equals(rows.length, 1, 'there should be one row')
+       var row = rows[0]
+       t.equals(row.num_rows, 2, 'should have found 2 rows')
+
+       transaction.end()
+
+       var trace = transaction.trace
+       t.ok(trace, 'trace should exist')
+       t.ok(trace.root, 'root element should exist.')
+       t.equals(trace.root.children.length, 1, 'There should be only one child.')
+
+       var selectSegment = trace.root.children[0]
+       t.ok(selectSegment, 'trace segment for first SELECT should exist')
+       t.equals(selectSegment.name, 'Datastore/statement/MySQL/test/select',
+                'should register as SELECT')
+       t.equals(selectSegment.children.length, 2,
+                'SELECT should have 2 children')
+
+       var insertSegment = selectSegment.children[1].children[0]
+       t.ok(insertSegment, 'trace segment for INSERT should exist')
+       t.equals(insertSegment.name, 'Datastore/statement/MySQL/test/insert',
+                'should register as INSERT')
+
+       t.equals(
+         insertSegment.children.length,
+         1,
+         'should only have a callback segment'
+       )
+
+       t.equals(
+         insertSegment.children[0].name,
+         'Callback: anonymous',
+         'callback segment should have expected name'
+       )
+
+       var countSegment = insertSegment.children[0].children[0]
+       t.ok(countSegment, 'trace segment for SELECT COUNT(*) should exist')
+       t.equals(countSegment.name, 'Datastore/statement/MySQL/test/select',
+                'should register as SELECT')
+
+      t.equals(
+        countSegment.children.length,
+        1,
+        'should only have a callback segment'
+      )
+
+      t.equals(
+        countSegment.children[0].name,
+        'Callback: anonymous',
+        'callback segment should have expected name'
+      )
+
+       var wrapCallback = countSegment.children[0]
+       t.equals(wrapCallback.children.length, 0,
+                'SELECT COUNT should leave us here at the end')
+       t.end()
+    }
+  })
 })

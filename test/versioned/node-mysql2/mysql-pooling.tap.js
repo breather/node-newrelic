@@ -19,7 +19,7 @@ test('MySQL instrumentation with a connection pool and node-mysql 2.0+',
   helper.bootstrapMySQL(function cb_bootstrapMySQL(error, app) {
     // set up the instrumentation before loading MySQL
     var agent = helper.instrumentMockedAgent()
-    var mysql   = require('mysql')
+    var mysql   = require('mysql2')
       , generic = require('generic-pool')
 
 
@@ -122,7 +122,7 @@ test('MySQL instrumentation with a connection pool and node-mysql 2.0+',
       return t.end()
     }
 
-    this.tearDown(function cb_tearDown() {
+    t.tearDown(function cb_tearDown() {
       pool.drain(function() {
         pool.destroyAllNow()
         helper.unloadAgent(agent)
@@ -142,38 +142,59 @@ test('MySQL instrumentation with a connection pool and node-mysql 2.0+',
           return t.end()
         }
 
-        var transaction = agent.getTransaction()
-        if (!transaction) {
-          t.fail('transaction should be visible')
-          return t.end()
-        }
-
-        t.equals(row.id, 1, 'node-mysql should still work (found id)')
-        t.equals(row.test_value, 'hamburgefontstiv',
-                 'mysql driver should still work (found value)')
-
-        transaction.end()
-
-        var trace = transaction.trace
-        t.ok(trace, 'trace should exist')
-        t.ok(trace.root, 'root element should exist.')
-        t.equals(trace.root.children.length, 2, 'There should be only one child.')
-
-        var selectSegment = trace.root.children[1]
-        t.ok(selectSegment, 'trace segment for first SELECT should exist')
-        t.equals(selectSegment.name,
-                 'Datastore/statement/MySQL/agent_integration.test/select',
-                 'should register as SELECT')
-
-        t.equals(selectSegment.children.length, 1, 'should only have a callback segment')
-        t.equals(selectSegment.children[0].name, 'Callback: anonymous')
-        t.equals(
-          selectSegment.children[0].children.length,
-          0,
-          'callback should not have children'
-        )
-        t.end()
+        // need to inspect on next tick, otherwise calling transaction.end() here
+        // in the callback (which is its own segment) would mark it as truncated
+        // (since it has not finished executing)
+        process.nextTick(inspect.bind(null, row))
       })
     })
+
+    function inspect(row) {
+      var transaction = agent.getTransaction()
+      if (!transaction) {
+        t.fail('transaction should be visible')
+        return t.end()
+      }
+
+      t.equals(row.id, 1, 'node-mysql should still work (found id)')
+      t.equals(row.test_value, 'hamburgefontstiv',
+               'mysql driver should still work (found value)')
+
+      transaction.end()
+
+      var trace = transaction.trace
+      var selectSegment = null
+      t.ok(trace, 'trace should exist')
+      t.ok(trace.root, 'root element should exist.')
+      if (trace.root.children.length === 2) {         // MySQL2 <=1.0.0
+        selectSegment = trace.root.children[1]
+      } else if (trace.root.children.length === 3) {  // MySQL2 >=1.1.0
+        t.equals(
+          trace.root.children[1].name,
+          'timers.setTimeout',
+          'should have timeout segment'
+        )
+        selectSegment = trace.root.children[2]
+      } else {
+        t.fail('unknown number of children: ' + trace.root.children.length)
+        return t.end()
+      }
+
+      t.ok(selectSegment, 'trace segment for first SELECT should exist')
+      t.equals(
+        selectSegment.name,
+        'Datastore/statement/MySQL/agent_integration.test/select',
+        'should register as SELECT'
+      )
+
+      t.equals(selectSegment.children.length, 1, 'should only have a callback segment')
+      t.equals(selectSegment.children[0].name, 'Callback: anonymous')
+      t.equals(
+        selectSegment.children[0].children.length,
+        0,
+        'callback should not have children'
+      )
+      t.end()
+    }
   }.bind(this))
 })

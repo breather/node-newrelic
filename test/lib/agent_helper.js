@@ -22,6 +22,10 @@ var CAPATH = path.join(__dirname, 'ca-certificate.crt')
 var _agent
 
 var helper = module.exports = {
+  getAgent: function getAgent() {
+    return _agent
+  },
+
   /**
    * Set up an agent that won't try to connect to the collector, but also
    * won't instrument any calling code.
@@ -108,22 +112,17 @@ var helper = module.exports = {
     shimmer.unwrapAll()
     shimmer.debug = false
 
-    // On v0.8 each mocked agent will add an uncaughtException handler
-    // that needs to be removed on unload
-    var listeners = process.listeners('uncaughtException')
-    for (var i = 0, len = listeners.length; i < len; ++i) {
-      var handler = listeners[i]
-      if (typeof handler === 'function'
-          && handler.name === '__NR_uncaughtExceptionHandler') {
-        process.removeListener('uncaughtException', handler)
-      }
-    }
+    // On v0.8 each mocked agent will add an uncaughtException handler, and on
+    // all versions each agent will add an unhandledRejection handler. These
+    // handlers need to be removed on unload.
+    removeListenerByName(process, 'uncaughtException', '__NR_uncaughtExceptionHandler')
+    removeListenerByName(process, 'unhandledRejection', '__NR_unhandledRejectionHandler')
 
     if (agent === _agent) _agent = null
   },
 
-  loadTestAgent: function loadTestAgent(t) {
-    var agent = helper.instrumentMockedAgent()
+  loadTestAgent: function loadTestAgent(t, flags, conf) {
+    var agent = helper.instrumentMockedAgent(flags, conf)
     t.tearDown(function tearDown() {
       helper.unloadAgent(agent)
     })
@@ -199,7 +198,7 @@ var helper = module.exports = {
     var server  = new mongodb.Server(params.mongodb_host, params.mongodb_port, {
       auto_reconnect : true
     })
-    var db = mongodb.Db('integration', server, {
+    var db = new mongodb.Db('integration', server, {
       w: 1,
       safe : true,
       numberOfRetries: 10,
@@ -298,5 +297,22 @@ var helper = module.exports = {
     }
 
     return exceptionHandlers
+  }
+}
+
+/**
+ * Removes all listeners with the given name from the emitter.
+ *
+ * @param {EventEmitter}  emitter       - The emitter with listeners to remove.
+ * @param {string}        eventName     - The event to search within.
+ * @param {string}        listenerName  - The name of the listeners to remove.
+ */
+function removeListenerByName(emitter, eventName, listenerName) {
+  var listeners = emitter.listeners(eventName)
+  for (var i = 0, len = listeners.length; i < len; ++i) {
+    var listener = listeners[i]
+    if (typeof listener === 'function' && listener.name === listenerName) {
+      emitter.removeListener(eventName, listener)
+    }
   }
 }

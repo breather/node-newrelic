@@ -4,13 +4,15 @@ var chai = require('chai')
 var expect = chai.expect
 var should = chai.should()
 var helper = require('../../lib/agent_helper')
-var config = require('../../../lib/config.default').config
+var configurator = require('../../../lib/config')
+var configDefaults = require('../../../lib/config.default').config
 var ErrorAggregator = require('../../../lib/errors/aggregator')
 var Transaction = require('../../../lib/transaction')
 var semver = require('semver')
 var API = require('../../../api.js')
 var NAMES = require('../../../lib/metrics/names.js')
 
+var config = configurator.initialize(configDefaults)
 
 function createTransaction(agent, code, isWeb) {
   if (typeof isWeb === 'undefined') isWeb = true
@@ -142,6 +144,15 @@ describe('agent attribute format', function () {
 
     expect(params).deep.equals({})
   })
+
+  it('redacts the error message in high security mode', function () {
+    agent.config.high_security = true
+    error.add(trans, new Error('this should not be here'), {a: 'AA'})
+    agent.errors.onTransactionFinished(trans, agent.metrics)
+
+    expect(error.errors[0][2]).to.equal('')
+    expect(error.errors[0][4].stack_trace[0]).to.equal('Error: <redacted>')
+  })
 })
 
 describe('display name', function () {
@@ -236,6 +247,59 @@ describe('ErrorAggregator', function () {
     expect(tracer.errors.length).equal(0)
 
     config.collect_errors = true
+  })
+
+  it('should gather the same error in two transactions', function (done) {
+    var error = new Error('this happened once')
+    var agent = helper.loadMockedAgent()
+    var tracer = agent.errors
+    var first = new Transaction(agent)
+    var second = new Transaction(agent)
+
+    expect(tracer.errorCount).equal(0)
+    expect(tracer.errors.length).equal(0)
+
+    tracer.add(first, error)
+    expect(first.exceptions.length).equal(1)
+
+    tracer.add(second, error)
+    expect(second.exceptions.length).equal(1)
+
+    first.end(function onEnd() {
+      expect(tracer.errorCount).equal(1)
+
+      second.end(function secondEnd() {
+        expect(tracer.errorCount).equal(2)
+
+        helper.unloadAgent(agent)
+        done()
+      })
+    })
+  })
+
+  it('should not gather the same error twice in the same transaction', function () {
+    var error = new Error('this happened once')
+    expect(tracer.errorCount).equal(0)
+    expect(tracer.errors.length).equal(0)
+
+    tracer.add(null, error)
+    tracer.add(null, error)
+
+    expect(tracer.errorCount).equal(1)
+    expect(tracer.errors.length).equal(1)
+  })
+
+  it('should not break on read only objects', function () {
+    var error = new Error('this happened once')
+    Object.freeze(error)
+    expect(tracer.errorCount).equal(0)
+    expect(tracer.errors.length).equal(0)
+
+    tracer.add(null, error)
+    tracer.add(null, error)
+
+    expect(tracer.errorCount).equal(1)
+    expect(tracer.errors.length).equal(1)
   })
 
   it('should retain a maximum of 20 errors to send', function () {
@@ -522,7 +586,7 @@ describe('ErrorAggregator', function () {
     })
 
     it('should have the default scope', function () {
-      expect(errorJSON[1]).equal('WebTransaction/Uri/*')
+      expect(errorJSON[1]).equal('Unknown')
     })
 
     it('should have an HTTP status code error message', function () {
@@ -676,7 +740,7 @@ describe('ErrorAggregator', function () {
     })
 
     it('should have the default scope', function () {
-      expect(errorJSON[1]).equal('WebTransaction/Uri/*')
+      expect(errorJSON[1]).equal('Unknown')
     })
 
     it('should fish the message out of the exception', function () {
@@ -725,7 +789,7 @@ describe('ErrorAggregator', function () {
     })
 
     it('should have the default scope', function () {
-      expect(errorJSON[1]).equal('WebTransaction/Uri/*')
+      expect(errorJSON[1]).equal('Unknown')
     })
 
     it('should fish the message out of the exception', function () {
@@ -843,7 +907,7 @@ describe('ErrorAggregator', function () {
     })
 
     it('should have the default scope', function () {
-      expect(errorJSON[1]).equal('WebTransaction/Uri/*')
+      expect(errorJSON[1]).equal('Unknown')
     })
 
     it('should turn the string into the message', function () {
@@ -1040,7 +1104,7 @@ describe('ErrorAggregator', function () {
     })
 
     it('should never merge more than 20 errors', function () {
-      var sample = [0, 'WebTransaction/Uri/*', 'something bad happened', 'Error', {}]
+      var sample = [0, 'Unknown', 'something bad happened', 'Error', {}]
       var errors = []
       for (var i = 0; i < 30; i++) errors.push(sample)
 
@@ -1116,7 +1180,7 @@ describe('ErrorAggregator', function () {
       })
 
       it('should have the default name', function () {
-        expect(json[1]).equal('WebTransaction/Uri/*')
+        expect(json[1]).equal('Unknown')
       })
 
       it('should have the error\'s message', function () {
@@ -1522,6 +1586,15 @@ describe('error events', function() {
     })
   })
 
+  it('should omit the error message when in high security mode', function() {
+    agent.config.high_security = true
+    agent.errors.add(null, new Error('some error'))
+    var events = agent.errors.getEvents()
+    expect(events[0][0]['error.message']).to.equal('')
+    agent.config.high_security = false
+
+  })
+
   it('not spill over reservoir size', function() {
     if (agent) helper.unloadAgent(agent)
     agent = helper.loadMockedAgent(null,
@@ -1607,15 +1680,15 @@ describe('error events', function() {
         expect(attributes['error.class']).to.be.a('string')
         expect(attributes['error.message']).to.be.a('string')
         expect(attributes.timestamp).closeTo(nowSeconds, 1)
-        expect(attributes.transactionName).equal('None')
+        expect(attributes.transactionName).equal('Unknown')
       })
 
-      it('should set transactionName to None', function() {
+      it('should set transactionName to Unknown', function() {
         var error = new Error('some error')
         aggregator.add(null, error)
 
         var attributes = getFirstEventIntrinsicAttributes(aggregator)
-        expect(attributes.transactionName).equal('None')
+        expect(attributes.transactionName).equal('Unknown')
       })
 
       it('should contain supplied custom parameters', function() {
@@ -1661,15 +1734,15 @@ describe('error events', function() {
         expect(attributes['error.class']).to.be.a('string')
         expect(attributes['error.message']).to.be.a('string')
         expect(attributes.timestamp).closeTo(nowSeconds, 1)
-        expect(attributes.transactionName).equal('None')
+        expect(attributes.transactionName).equal('Unknown')
       })
 
-      it('should set transactionName to None', function() {
+      it('should set transactionName to Unknown', function() {
         var error = new Error('some error')
         api.noticeError(error)
 
         var attributes = getFirstEventIntrinsicAttributes(aggregator)
-        expect(attributes.transactionName).equal('None')
+        expect(attributes.transactionName).equal('Unknown')
       })
 
       it('should contain supplied custom parameters', function() {
@@ -1890,7 +1963,7 @@ describe('error events', function() {
       var transaction = createTransaction(agent, 500)
       transaction.trace.parameters['host.displayName'] = 'myHost'
       var error = new Error('some error')
-      aggregator.add(null, error, { a: 'a' })
+      aggregator.add(transaction, error, { a: 'a' })
 
       transaction.end(function() {
         var agentAttributes = getFirstEventAgentAttributes(aggregator)
@@ -1922,4 +1995,3 @@ describe('error events', function() {
     return events[0]
   }
 })
-

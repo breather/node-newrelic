@@ -9,6 +9,7 @@ INTEGRATION  += test/integration/*/*.tap.js
 INTEGRATION  += test/integration/*/*/*.tap.js
 INTEGRATION  += test/versioned/*/*.tap.js
 SMOKE        = test/smoke/*.tap.js
+PRERELEASE	 = test/prerelease/*/*.tap.js
 # subcomponents manage their own modules
 PACKAGES = $(shell find . -name package.json -and -not -path '*/node_modules/*' -and -not -path '*/example*')
 # strip the package.json from the results
@@ -40,6 +41,7 @@ clean:
 node_modules: package.json
 	@rm -rf node_modules
 	npm --loglevel warn install
+	node ./bin/check-native-metrics.js
 
 build: clean node_modules
 	@echo "Currently using node $(NODE_VERSION)."
@@ -72,10 +74,10 @@ sub_node_modules:
 ca-gen:
 	@./bin/update-ca-bundle.sh
 
-integration: node_modules sub_node_modules ca-gen $(CERTIFICATE)
-	@HOST=`boot2docker ip 2>/dev/null`; \
+docker:
+	@HOST=`docker-machine ip default 2>/dev/null`; \
 	if test "$${HOST}"; then \
-	  echo "Using boot2docker host through IP $${HOST}"; \
+	  echo "Using docker-machine host through IP $${HOST}"; \
 	  export NR_NODE_TEST_MEMCACHED_HOST=$${HOST}; \
 	  export NR_NODE_TEST_MONGODB_HOST=$${HOST}; \
 	  export NR_NODE_TEST_MYSQL_HOST=$${HOST}; \
@@ -83,10 +85,21 @@ integration: node_modules sub_node_modules ca-gen $(CERTIFICATE)
 	  export NR_NODE_TEST_CASSANDRA_HOST=$${HOST}; \
 	  export NR_NODE_TEST_POSTGRES_HOST=$${HOST}; \
 	fi; \
+
+integration: node_modules ca-gen $(CERTIFICATE) docker
+	@cd test && npm install glob@~3.2.9
+	@node test/bin/install_sub_deps integration
+	@node test/bin/install_sub_deps versioned
 	time $(TAP) $(INTEGRATION)
 
-smoke: clean node_modules
-	npm install --production
+prerelease: node_modules ca-gen $(CERTIFICATE) docker
+	@cd test && npm install glob@~3.2.9
+	@node test/bin/install_sub_deps prerelease
+	time $(TAP) $(PRERELEASE)
+
+smoke: clean
+	npm install --production --loglevel warn
+	npm install tap
 	@cd test/smoke && npm install
 	time $(TAP) $(SMOKE)
 
@@ -147,38 +160,41 @@ $(CERTIFICATE): $(CACERT)
 		-out $(CERTIFICATE)
 	@rm -f server.csr
 
+security:
+	./node_modules/.bin/nsp check
+
 services:
-	if docker ps -a | grep -q "[^a-zA-Z_]nr_node_memcached[^a-zA-Z_]"; then \
+	if docker ps -a | grep -q "nr_node_memcached"; then \
 	  docker start nr_node_memcached; \
 	else \
-	  docker run -d --name nr_node_memcached -p 11211:11211 borja/docker-memcached; \
+	  docker run -d --name nr_node_memcached -p 11211:11211 memcached; \
 	fi
-	if docker ps -a | grep -q "[^a-zA-Z_]nr_node_mongodb[^a-zA-Z_]"; then \
+	if docker ps -a | grep -q "nr_node_mongodb"; then \
 	  docker start nr_node_mongodb; \
 	else \
 	  docker run -d --name nr_node_mongodb -p 27017:27017 library/mongo:2; \
 	fi
-	if docker ps -a | grep -q "[^a-zA-Z_]nr_node_mysql[^a-zA-Z_]"; then \
+	if docker ps -a | grep -q "nr_node_mysql"; then \
 	  docker start nr_node_mysql; \
 	else \
 	  docker run -d --name nr_node_mysql -p 3306:3306 orchardup/mysql; \
 	fi
-	if docker ps -a | grep -q "[^a-zA-Z_]nr_node_redis[^a-zA-Z_]"; then \
+	if docker ps -a | grep -q "nr_node_redis"; then \
 	  docker start nr_node_redis; \
 	else \
 	  docker run -d --name nr_node_redis -p 6379:6379 redis; \
 	fi
-	if docker ps -a | grep -q "[^a-zA-Z_]nr_node_cassandra[^a-zA-Z_]"; then \
+	if docker ps -a | grep -q "nr_node_cassandra"; then \
 	  docker start nr_node_cassandra; \
 	else \
 	  docker run -d --name nr_node_cassandra -p 9042:9042 zmarcantel/cassandra; \
 	fi
-	if docker ps -a | grep -q "[^a-zA-Z_]nr_node_postgres[^a-zA-Z_]"; then \
+	if docker ps -a | grep -q "nr_node_postgres"; then \
 	  docker start nr_node_postgres; \
 	else \
 	  docker run -d --name nr_node_postgres -p 5432:5432 postgres:9.2; \
 	fi
-	if docker ps -a | grep -q "[^a-zA-Z_]nr_node_oracle[^a-zA-Z_]"; then \
+	if docker ps -a | grep -q "nr_node_oracle"; then \
 	  docker start nr_node_oracle; \
 	else \
 	  docker run -d --name nr_node_oracle -p 1521:1521 alexeiled/docker-oracle-xe-11g; \

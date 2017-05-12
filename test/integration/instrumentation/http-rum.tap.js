@@ -35,7 +35,7 @@ test('custom naming rules should be applied early for RUM', function (t) {
 
   var external = http.createServer(function cb_createServer(request, response) {
     t.equal(
-      agent.getTransaction().partialName,
+      agent.getTransaction()._partialName,
       'NormalizedUri/WORKING',
       'name rules should be applied'
     )
@@ -66,7 +66,7 @@ test('custom naming rules should be applied early for RUM', function (t) {
     }
   })
 
-  this.tearDown(function cb_tearDown() {
+  t.tearDown(function cb_tearDown() {
     external.close()
     helper.unloadAgent(agent)
   })
@@ -114,7 +114,7 @@ test('custom web transactions should have rules applied for RUM', function (t) {
 
   handler()
 
-  this.tearDown(function cb_tearDown() {
+  t.tearDown(function cb_tearDown() {
     helper.unloadAgent(agent)
   })
 })

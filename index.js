@@ -7,7 +7,10 @@ var message
 var agent
 
 var agentVersion = require('./package.json').version
-logger.trace("Using New Relic for Node.js version %s.", agentVersion)
+logger.info(
+  "Using New Relic for Node.js. Agent version: %s; Node version: %s.",
+  agentVersion, process.version
+)
 
 if (require.cache.__NR_cache) {
   logger.warn(
@@ -43,11 +46,13 @@ function initialize() {
     logger.debug("Process title is %s.", process.title)
     logger.debug("Application was invoked as %s.", process.argv.join(' '))
 
-    /* Loading the configuration can throw if a configuration file isn't found and
-     * the environment variable NEW_RELIC_NO_CONFIG_FILE isn't set.
-     */
-    var config = require('./lib/config.js').initialize()
-    if (!config.agent_enabled) {
+    var config = require('./lib/config.js').getOrCreateInstance()
+
+    // Get the initialized logger as we likely have a bootstrap logger which
+    // just pipes to stdout.
+    logger = require('./lib/logger.js')
+
+    if (!config || !config.agent_enabled) {
       logger.info("Module not enabled in configuration; not starting.")
     } else {
       /* Only load the rest of the module if configuration is available and the
@@ -60,6 +65,12 @@ function initialize() {
       var Agent = require('./lib/agent.js')
       agent = new Agent(config)
       var appNames = agent.config.applications()
+
+      if (config.logging.diagnostics) {
+        logger.warn(
+          'Diagnostics logging is enabled, this may cause significant overhead.'
+        )
+      }
 
       if (appNames.length < 1) {
         message = "New Relic requires that you name this application!\n" +

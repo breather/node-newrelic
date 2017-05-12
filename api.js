@@ -79,7 +79,7 @@ API.prototype.setTransactionName = function setTransactionName(name) {
     return
   }
 
-  transaction.partialName = NAMES.CUSTOM + '/' + name
+  transaction.forceName = NAMES.CUSTOM + '/' + name
 }
 
 /**
@@ -124,7 +124,7 @@ API.prototype.setControllerName = function setControllerName(name, action) {
   }
 
   action = action || transaction.verb || 'GET'
-  transaction.partialName = NAMES.CONTROLLER + '/' + name + '/' + action
+  transaction.forceName = NAMES.CONTROLLER + '/' + name + '/' + action
 }
 
 /**
@@ -142,18 +142,18 @@ API.prototype.addCustomParameter = function addCustomParameter(name, value) {
   )
   metric.incrementCallCount()
 
-  // If high security mode is on or custom params are specified as off,
-  // custom params are disabled
-  if (this.agent.config.capture_params === false) {
-    logger.trace("addCustomParameter was called while disabled with name %s", name)
-
-    if (this.agent.config.high_security === true) {
-      logger.warnOnce("Custom params",
-          "Custom parameters are disabled by high security mode.")
-      return false
-    }
-    logger.warnOnce("Custom params",
-        "addCustomParameter was called while config.capture_params was false")
+  // If high security mode is on, custom params are disabled.
+  if (this.agent.config.high_security === true) {
+    logger.warnOnce(
+      "Custom params",
+      "Custom parameters are disabled by high security mode."
+    )
+    return false
+  } else if (!this.agent.config.api.custom_parameters_enabled) {
+    logger.debug(
+      "Config.api.custom_parameters_enabled set to false, not collecting value"
+    )
+    return false
   }
 
   var ignored = this.agent.config.ignored_params || []
@@ -192,6 +192,35 @@ API.prototype.addCustomParameter = function addCustomParameter(name, value) {
 }
 
 /**
+ * Adds all custom parameters in an object to the current transaction.
+ *
+ * See documentation for newrelic.addCustomParameter for more information on
+ * setting custom parameters.
+ *
+ * An example of setting a custom parameter object:
+ *
+ *    newrelic.addCustomParameters({test: 'value', test2: 'value2'});
+ *
+ * @param {object} [params]
+ * @param {string} [params.KEY] The name you want displayed in the RPM UI.
+ * @param {string} [params.KEY.VALUE] The value you want displayed. Must be serializable.
+ */
+API.prototype.addCustomParameters = function addCustomParameters(params) {
+  var metric = this.agent.metrics.getOrCreateMetric(
+    NAMES.SUPPORTABILITY.API + '/addCustomParameters'
+  )
+  metric.incrementCallCount()
+
+  for (var key in params) {
+    if (!params.hasOwnProperty(key)) {
+      continue
+    }
+
+    this.addCustomParameter(key, params[key])
+  }
+}
+
+/**
  * Tell the tracer whether to ignore the current transaction. The most common
  * use for this will be to mark a transaction as ignored (maybe it's handling
  * a websocket polling channel, or maybe it's an external call you don't care
@@ -216,13 +245,18 @@ API.prototype.setIgnoreTransaction = function setIgnoreTransaction(ignored) {
 }
 
 /**
- * Send errors to New Relic that you've already handled yourself. Should
- * be an Error or one of its subtypes, but the API will handle strings
- * and objects that have an attached .message or .stack property.
+ * Send errors to New Relic that you've already handled yourself. Should be an
+ * `Error` or one of its subtypes, but the API will handle strings and objects
+ * that have an attached `.message` or `.stack` property.
  *
- * @param {Error}  error            The error to be traced.
- * @param {object} customParameters Any custom parameters to be displayed in
- *                                  the New Relic UI.
+ * NOTE: Errors that are recorded using this method do _not_ obey the
+ * `ignore_status_codes` configuration.
+ *
+ * @param {Error} error
+ *  The error to be traced.
+ *
+ * @param {object} [customParameters]
+ *  Optional. Any custom parameters to be displayed in the New Relic UI.
  */
 API.prototype.noticeError = function noticeError(error, customParameters) {
   var metric = this.agent.metrics.getOrCreateMetric(
@@ -230,6 +264,19 @@ API.prototype.noticeError = function noticeError(error, customParameters) {
   )
   metric.incrementCallCount()
 
+  // If high security mode is on, noticeError is disabled.
+  if (this.agent.config.high_security === true) {
+    logger.warnOnce(
+      "Notice Error",
+      "Notice error API are disabled by high security mode."
+    )
+    return false
+  } else if (!this.agent.config.api.notice_error_enabled) {
+    logger.debug(
+      "Config.api.notice_error_enabled set to false, not collecting error"
+    )
+    return false
+  }
 
   if (typeof error === 'string') error = new Error(error)
   var transaction = this.agent.tracer.getTransaction()
@@ -322,27 +369,41 @@ API.prototype.getBrowserTimingHeader = function getBrowserTimingHeader() {
 
   var config = this.agent.config
 
-  /* Gracefully fail.
+  /**
+   * Gracefully fail.
    *
    * Output an HTML comment and log a warning the comment is meant to be
    * innocuous to the end user.
+   *
+   * @param {number} num          - Error code from `RUM_ISSUES`.
+   * @param {bool} [quite=false]  - Be quiet about this failure.
+   *
+   * @see RUM_ISSUES
    */
-  function _gracefail(num) {
-    logger.warn(RUM_ISSUES[num])
+  function _gracefail(num, quiet) {
+    if (quiet) {
+      logger.debug(RUM_ISSUES[num])
+    } else {
+      logger.warn(RUM_ISSUES[num])
+    }
     return '<!-- NREUM: (' + num + ') -->'
   }
 
   var browser_monitoring = config.browser_monitoring
 
-  // config.browser_monitoring should always exist, but we don't want the agent to bail
-  // here if something goes wrong
+  // config.browser_monitoring should always exist, but we don't want the agent
+  // to bail here if something goes wrong
   if (!browser_monitoring) return _gracefail(2)
 
   /* Can control header generation with configuration this setting is only
    * available in the newrelic.js config file, it is not ever set by the
    * server.
    */
-  if (!browser_monitoring.enable) return _gracefail(0)
+  if (!browser_monitoring.enable) {
+    // It has been disabled by the user; no need to warn them about their own
+    // settings so fail quietly and gracefully.
+    return _gracefail(0, true)
+  }
 
   var trans = this.agent.getTransaction()
 
@@ -486,7 +547,24 @@ API.prototype.createTracer = function createTracer(name, callback) {
   return tracer.bindFunction(callback, segment, true)
 }
 
-API.prototype.createWebTransaction = function createWebTransaction(url, callback) {
+/**
+ * Creates a function that represents a web transaction. It does not start the
+ * transaction automatically - the returned function needs to be invoked to start it.
+ * Inside the handler function, the transaction must be ended by calling endTransaction().
+ *
+ * @example
+ * var newrelic = require('newrelic')
+ * var transaction = newrelic.createWebTransaction('/some/url/path', function() {
+ *   // do some work
+ *   newrelic.endTransaction()
+ * })
+ *
+ * @param {string}    url       The URL of the transaction.  It is used to name and group
+                                related transactions in APM, so it should be a generic
+                                name and not iclude any variable parameters.
+ * @param {Function}  handle    Function that represents the transaction work.
+ */
+API.prototype.createWebTransaction = function createWebTransaction(url, handle) {
   var metric = this.agent.metrics.getOrCreateMetric(
     NAMES.SUPPORTABILITY.API + '/createWebTransaction'
   )
@@ -494,7 +572,7 @@ API.prototype.createWebTransaction = function createWebTransaction(url, callback
 
   // FLAG: custom_instrumentation
   if (!this.agent.config.feature_flag.custom_instrumentation) {
-    return callback
+    return handle
   }
 
   var fail = false
@@ -503,21 +581,21 @@ API.prototype.createWebTransaction = function createWebTransaction(url, callback
     fail = true
   }
 
-  if (typeof callback !== 'function') {
-    logger.warn('createWebTransaction called with a callback arg that is not a function')
+  if (typeof handle !== 'function') {
+    logger.warn('createWebTransaction called with a handle arg that is not a function')
     fail = true
   }
 
   if (fail) {
-    // If name is undefined but callback is defined we should make a best effort
+    // If name is undefined but handle is defined we should make a best effort
     // to return it so things don't crash.
-    return callback
+    return handle
   }
 
   logger.debug(
     'creating web transaction generator %s (%s).',
     url,
-    callback && callback.name
+    handle && handle.name
   )
 
   var tracer = this.agent.tracer
@@ -528,34 +606,54 @@ API.prototype.createWebTransaction = function createWebTransaction(url, callback
     logger.debug(
       'creating web transaction %s (%s) with transaction id: %s',
       url,
-      callback && callback.name,
+      handle && handle.name,
       tx.id
     )
-    tx.partialName = NAMES.CUSTOM + NAMES.ACTION_DELIMITER + url
+    tx.nameState.setName(NAMES.CUSTOM, null, NAMES.ACTION_DELIMITER, url)
     tx.url = url
     tx.applyUserNamingRules(tx.url)
     tx.webSegment = tracer.createSegment(url, recordWeb)
     tx.webSegment.start()
 
-    return tracer.bindFunction(callback, tx.webSegment).apply(this, arguments)
+    return tracer.bindFunction(handle, tx.webSegment).apply(this, arguments)
   })
 }
 
+/**
+ * Creates a function that represents a background transaction. It does not start the
+ * transaction automatically - the returned function needs to be invoked to start it.
+ * Inside the handler function, the transaction must be ended by calling endTransaction().
+ *
+ * @example
+ * var newrelic = require('newrelic')
+ * var transaction = newrelic.createBackgroundTransaction('myTransaction', function() {
+ *   // do some work
+ *   newrelic.endTransaction()
+ * })
+ *
+ * @param {string}    name      The name of the transaction.  It is used to name and group
+                                related transactions in APM, so it should be a generic
+                                name and not iclude any variable parameters.
+ * @param {string}    [group]   Optional, used for grouping background transactions in
+ *                              APM.  For more information see:
+ *                              https://docs.newrelic.com/docs/apm/applications-menu/monitoring/transactions-page#txn-type-dropdown
+ * @param {Function}  handle    Function that represents the background work.
+ */
 API.prototype.createBackgroundTransaction = createBackgroundTransaction
 
-function createBackgroundTransaction(name, group, callback) {
+function createBackgroundTransaction(name, group, handle) {
   var metric = this.agent.metrics.getOrCreateMetric(
     NAMES.SUPPORTABILITY.API + '/createBackgroundTransaction'
   )
   metric.incrementCallCount()
 
-  if (callback === undefined && typeof group === 'function') {
-    callback = group
+  if (handle === undefined && typeof group === 'function') {
+    handle = group
     group = 'Nodejs'
   }
   // FLAG: custom_instrumentation
   if (!this.agent.config.feature_flag.custom_instrumentation) {
-    return callback
+    return handle
   }
 
   var fail = false
@@ -564,24 +662,24 @@ function createBackgroundTransaction(name, group, callback) {
     fail = true
   }
 
-  if (typeof callback !== 'function') {
+  if (typeof handle !== 'function') {
     logger.warn(
-      'createBackgroundTransaction called with a callback arg that is not a function'
+      'createBackgroundTransaction called with a handle arg that is not a function'
     )
     fail = true
   }
 
   if (fail) {
-    // If name is undefined but callback is defined we should make a best effort
+    // If name is undefined but handle is defined we should make a best effort
     // to return it so things don't crash.
-    return callback
+    return handle
   }
 
   logger.debug(
     'creating background transaction generator %s:%s (%s)',
     name,
     group,
-    callback && callback.name
+    handle && handle.name
   )
 
   var tracer = this.agent.tracer
@@ -593,7 +691,7 @@ function createBackgroundTransaction(name, group, callback) {
       'creating background transaction %s:%s (%s) with transaction id: %s',
       name,
       group,
-      callback && callback.name,
+      handle && handle.name,
       tx.id
     )
 
@@ -602,7 +700,7 @@ function createBackgroundTransaction(name, group, callback) {
     tx.bgSegment.partialName = group
     tx.bgSegment.start()
 
-    return tracer.bindFunction(callback, tx.bgSegment).apply(this, arguments)
+    return tracer.bindFunction(handle, tx.bgSegment).apply(this, arguments)
   })
 }
 
@@ -621,8 +719,6 @@ API.prototype.endTransaction = function endTransaction() {
   var tx = tracer.getTransaction()
 
   if (tx) {
-    // TODO: Log transaction name as well.
-    logger.debug('ending transaction with id: %s', tx.id)
     if (tx.webSegment) {
       tx.setName(tx.url, 0)
       tx.webSegment.markAsWeb(tx.url)
@@ -630,6 +726,7 @@ API.prototype.endTransaction = function endTransaction() {
     } else if (tx.bgSegment) {
       tx.bgSegment.end()
     }
+    logger.debug('ending transaction with id: %s and name: %s', tx.id, tx.name)
     tx.end()
   } else {
     logger.debug('endTransaction() called while not in a transaction.')
@@ -722,6 +819,20 @@ API.prototype.recordCustomEvent = function recordCustomEvent(eventType, attribut
   )
   metric.incrementCallCount()
 
+  // If high security mode is on, custom events are disabled.
+  if (this.agent.config.high_security === true) {
+    logger.warnOnce(
+      "Custom Event",
+      "Custom events are disabled by high security mode."
+    )
+    return false
+  } else if (!this.agent.config.api.custom_events_enabled) {
+    logger.debug(
+      "Config.api.custom_events_enabled set to false, not collecting value"
+    )
+    return false
+  }
+
   if (!this.agent.config.custom_insights_events.enabled) {
     return
   }
@@ -777,6 +888,79 @@ API.prototype.recordCustomEvent = function recordCustomEvent(eventType, attribut
   this.agent.customEvents.add([instrinics, attributes])
 }
 
+/**
+ * Shuts down the agent.
+ *
+ * @param {object}  [options]                           object with shut down options
+ * @param {boolean} [options.collectPendingData=false]  If true, the agent will send any
+ *                                                      pending data to the collector
+ *                                                      before shutting down.
+ * @param {number}  [options.timeout]                   time in ms to wait before
+ *                                                      shutting down
+ * @param {function} [callback]                         callback function that runs when
+ *                                                      agent stopped
+ */
+API.prototype.shutdown = function shutdown(options, cb) {
+  var metric = this.agent.metrics.getOrCreateMetric(
+    NAMES.SUPPORTABILITY.API + '/shutdown'
+  )
+  metric.incrementCallCount()
+
+  var callback = cb
+  if (!callback) {
+    if (typeof options === 'function') {
+      callback = options
+    } else {
+      callback = function noop() {}
+    }
+  }
+
+  var agent = this.agent
+
+  function cb_harvest(error) {
+    if (error) {
+      logger.error(
+        error,
+        'An error occurred while running last harvest before shutdown.'
+      )
+    }
+    agent.stop(callback)
+  }
+
+  if (options && options.collectPendingData && agent._state !== 'started') {
+    if (typeof options.timeout === 'number') {
+      var shutdownTimeout = setTimeout(function shutdownTimeout() {
+        agent.stop(callback)
+      }, options.timeout)
+      // timer.unref only in 0.9+
+      if (shutdownTimeout.unref) {
+        shutdownTimeout.unref()
+      }
+    } else if (options.timeout) {
+      logger.warn(
+        'options.timeout should be of type "number". Got %s',
+        typeof options.timeout
+      )
+    }
+
+    agent.on('started', function shutdownHarvest() {
+      agent.harvest(cb_harvest)
+    })
+    agent.on('errored', function logShutdownError(error) {
+      agent.stop(callback)
+      if (error) {
+        logger.error(
+          error,
+          'The agent encountered an error after calling shutdown.'
+        )
+      }
+    })
+  } else if (options && options.collectPendingData) {
+    agent.harvest(cb_harvest)
+  } else {
+    agent.stop(callback)
+  }
+}
 
 function _checkKeyLength(object, maxLength) {
   var keys = Object.keys(object)

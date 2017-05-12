@@ -1,20 +1,19 @@
 'use strict'
 
-var path        = require('path')
-  , chai        = require('chai')
-  , should      = chai.should()
-  , expect      = chai.expect
-  , helper      = require('../lib/agent_helper.js')
-  , API         = require('../../api.js')
-  , Metrics     = require('../../lib/metrics')
-  , Trace       = require('../../lib/transaction/trace')
-  , Transaction = require('../../lib/transaction')
-  , hashes      = require('../../lib/util/hashes')
+var chai        = require('chai')
+var should      = chai.should()
+var expect      = chai.expect
+var helper      = require('../lib/agent_helper.js')
+var API         = require('../../api.js')
+var Metrics     = require('../../lib/metrics')
+var Trace       = require('../../lib/transaction/trace')
+var Transaction = require('../../lib/transaction')
+var hashes      = require('../../lib/util/hashes')
 
 
 describe("Transaction", function () {
   var agent
-    , trans
+  var trans
 
 
   beforeEach(function () {
@@ -86,7 +85,7 @@ describe("Transaction", function () {
     })
 
     it("should have no PARTIAL name set (for hidden class)", function () {
-      expect(trans.partialName).equal(null)
+      expect(trans.nameState.getName()).equal(null)
     })
 
     it("should have no HTTP status code set (for hidden class)", function () {
@@ -145,8 +144,8 @@ describe("Transaction", function () {
     it("should allow multiple overlapping metric measurements for same name",
        function () {
       var TRACE_NAME = 'Custom/Test06'
-        , SLEEP_DURATION = 43
-        , tt = new Transaction(agent)
+      var SLEEP_DURATION = 43
+      var tt = new Transaction(agent)
 
 
       tt.measure(TRACE_NAME, null, SLEEP_DURATION)
@@ -205,16 +204,18 @@ describe("Transaction", function () {
 
       it("partial name should remain unset if it wasn't set before", function () {
         trans.url = '/some/pathname'
-        expect(trans.partialName).equal(null)
+        expect(trans.nameState.getName()).equal(null)
         expect(trans.getName()).equal('WebTransaction/NormalizedUri/*')
-        expect(trans.partialName).equal(null)
+        expect(trans.nameState.getName()).equal(null)
       })
 
       it("should return the right name if partialName and url are set", function () {
-        trans.partialName = 'Framework/verb/route'
+        trans.nameState.setPrefix('Framework')
+        trans.nameState.setVerb('verb')
+        trans.nameState.appendPath('route')
         trans.url = '/route'
         expect(trans.getName()).equal('WebTransaction/Framework/verb/route')
-        expect(trans.partialName).equal('Framework/verb/route')
+        expect(trans.nameState.getName()).equal('Framework/verb/route')
       })
 
       it("should return the name if it has already been set", function () {
@@ -231,7 +232,7 @@ describe("Transaction", function () {
 
       it("produces a normalized partial name when status is 200", function () {
         trans.setName('/test/string?do=thing&another=thing', 200)
-        expect(trans.partialName).equal('NormalizedUri/*')
+        expect(trans._partialName).equal('NormalizedUri/*')
       })
 
       it("passes through status code when status is 200", function () {
@@ -240,18 +241,32 @@ describe("Transaction", function () {
       })
 
       it("produces a non-error name when status code is ignored", function () {
-        trans.setName('/test/string?do=thing&another=thing', 404)
+        agent.config.error_collector.ignore_status_codes = [404, 500]
+        trans.setName('/test/string?do=thing&another=thing', 500)
         expect(trans.name).equal('WebTransaction/NormalizedUri/*')
       })
 
       it("produces a non-error partial name when status code is ignored", function () {
-        trans.setName('/test/string?do=thing&another=thing', 404)
-        expect(trans.partialName).equal('NormalizedUri/*')
+        agent.config.error_collector.ignore_status_codes = [404, 500]
+        trans.setName('/test/string?do=thing&another=thing', 500)
+        expect(trans._partialName).equal('NormalizedUri/*')
       })
 
       it("passes through status code when status is 404", function () {
         trans.setName('/test/string?do=thing&another=thing', 404)
         expect(trans.statusCode).equal(404)
+      })
+
+      it("produces a 'not found' partial name when status is 404", function() {
+        trans.nameState.setName('Expressjs', 'GET', '/')
+        trans.setName('/test/string?do=thing&another=thing', 404)
+        expect(trans._partialName).equal('Expressjs/GET/(not found)')
+      })
+
+      it("produces a 'not found' name when status is 404", function() {
+        trans.nameState.setName('Expressjs', 'GET', '/')
+        trans.setName('/test/string?do=thing&another=thing', 404)
+        expect(trans.name).equal('WebTransaction/Expressjs/GET/(not found)')
       })
 
       it("produces a regular name when status is 501", function () {
@@ -261,7 +276,7 @@ describe("Transaction", function () {
 
       it("produces a regular partial name when status is 501", function () {
         trans.setName('/test/string?do=thing&another=thing', 501)
-        expect(trans.partialName).equal('NormalizedUri/*')
+        expect(trans._partialName).equal('NormalizedUri/*')
       })
 
       it("passes through status code when status is 501", function () {
@@ -272,7 +287,8 @@ describe("Transaction", function () {
 
     describe("with a custom partial name set", function () {
       beforeEach(function () {
-        trans.partialName = 'Custom/test'
+        trans.nameState.setPrefix('Custom')
+        trans.nameState.appendPath('test')
       })
 
       it("produces a custom name when status is 200", function () {
@@ -282,7 +298,7 @@ describe("Transaction", function () {
 
       it("produces a partial name when status is 200", function () {
         trans.setName('/test/string?do=thing&another=thing', 200)
-        expect(trans.partialName).equal('Custom/test')
+        expect(trans.nameState.getName()).equal('Custom/test')
       })
 
       it("should rename a transaction when told to by a rule", function () {
@@ -300,13 +316,14 @@ describe("Transaction", function () {
       })
 
       it("keeps the custom name when error status is ignored", function () {
-        trans.setName('/test/string?do=thing&another=thing', 404)
+        agent.config.error_collector.ignore_status_codes = [404, 500]
+        trans.setName('/test/string?do=thing&another=thing', 500)
         expect(trans.name).equal('WebTransaction/Custom/test')
       })
 
       it("keeps the custom partial name when error status is ignored", function () {
         trans.setName('/test/string?do=thing&another=thing', 404)
-        expect(trans.partialName).equal('Custom/test')
+        expect(trans.nameState.getName()).equal('Custom/test')
       })
 
       it("passes through status code when status is 404", function () {
@@ -321,7 +338,7 @@ describe("Transaction", function () {
 
       it("produces the custome partial name even when status is 501", function () {
         trans.setName('/test/string?do=thing&another=thing', 501)
-        expect(trans.partialName).equal('Custom/test')
+        expect(trans.nameState.getName()).equal('Custom/test')
       })
 
       it("passes through status code when status is 501", function () {
@@ -339,7 +356,7 @@ describe("Transaction", function () {
 
   describe("when setting apdex for key transactions", function () {
     var trans
-      , metric
+    var metric
 
 
     before(function () {
@@ -411,19 +428,19 @@ describe("Transaction", function () {
 
       transaction.pathHashes = ['/a', curHash, '/a/b']
       expect(transaction.alternatePathHashes()).equal('/a,/a/b')
-      transaction.partialName = transaction.name
+      transaction.nameState.setPrefix(transaction.name)
       transaction.name = null
       transaction.pathHashes = ['/a', '/a/b']
       expect(transaction.alternatePathHashes()).equal('/a,/a/b')
     })
 
     it('should return null when no alternate pathHashes exist', function() {
-      transaction.partialName = '/a/b/c'
+      transaction.nameState.setPrefix('/a/b/c')
       transaction.referringPathHash = '/d/e/f'
 
       var curHash = hashes.calculatePathHash(
         agent.config.applications()[0],
-        transaction.partialName,
+        transaction.nameState.getName(),
         transaction.referringPathHash
       )
 

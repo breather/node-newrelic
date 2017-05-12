@@ -12,8 +12,14 @@ var configurator = require('../../../lib/config.js')
 var Agent = require('../../../lib/agent.js')
 var Transaction = require('../../../lib/transaction')
 var clearAWSCache = require('../../../lib/aws-info').clearCache
-var clearSystemCache = require('../../../lib/system-info').clearCache
 
+
+// XXX Remove this when deprecating Node v0.8.
+if (!global.setImmediate) {
+  global.setImmediate = function(fn) {
+    global.setTimeout(fn, 0)
+  }
+}
 
 /*
  *
@@ -35,7 +41,6 @@ var awsRedirect
 
 function refreshAWSEndpoints() {
     clearAWSCache()
-    clearSystemCache()
     awsRedirect = nock(awsHost)
     for (var awsPath in awsResponses) {
       var redirect = awsRedirect.get('/2008-02-01/meta-data/' + awsPath)
@@ -122,7 +127,7 @@ describe("the New Relic agent", function () {
     })
 
     it("requires a valid value when changing state", function () {
-      expect(function () { agent.state('bogus'); }).throws('Invalid state bogus')
+      expect(function () { agent.setState('bogus'); }).throws('Invalid state bogus')
     })
 
     it("has some debugging configuration by default", function () {
@@ -236,41 +241,41 @@ describe("the New Relic agent", function () {
               done()
             })
           })
-
         })
       })
     })
 
-    describe("with naming rules configured", function () {
+    describe("with naming rules configured", function() {
       var configured
-      beforeEach(function () {
+      beforeEach(function() {
         var config = configurator.initialize({
           rules : {name : [
-            {pattern : '^/t',  name : 'u'},
-            {pattern : /^\/u/, name : 't'}
+            {pattern: '^/t',  name: 'u'},
+            {pattern: /^\/u/, name: 't'}
           ]}
         })
         configured = new Agent(config)
       })
 
-      it("loads the rules", function () {
+      it("loads the rules", function() {
         var rules = configured.userNormalizer.rules
-        expect(rules.length).equal(2)
-        // because of unshift, rules are in reverse of config order
-        expect(rules[0].pattern.source).equal('^\\/u')
+        expect(rules.length).equal(2 + 1) // +1 default ignore rule
+
+        // Rules are reversed by default
+        expect(rules[1].pattern.source).equal('^\\/u')
 
         if (semver.satisfies(process.versions.node, '>=1.0.0')) {
-            expect(rules[1].pattern.source).equal('^\\/t')
+            expect(rules[2].pattern.source).equal('^\\/t')
         } else {
-            expect(rules[1].pattern.source).equal('^/t')
+            expect(rules[2].pattern.source).equal('^/t')
         }
       })
     })
 
-    describe("with ignoring rules configured", function () {
+    describe("with ignoring rules configured", function() {
       var configured
 
-      beforeEach(function () {
+      beforeEach(function() {
         var config = configurator.initialize({
           rules : {ignore : [
             /^\/ham_snadwich\/ignore/
@@ -279,7 +284,7 @@ describe("the New Relic agent", function () {
         configured = new Agent(config)
       })
 
-      it("loads the rules", function () {
+      it("loads the rules", function() {
         var rules = configured.userNormalizer.rules
         expect(rules.length).equal(1)
         expect(rules[0].pattern.source).equal('^\\/ham_snadwich\\/ignore')
@@ -287,7 +292,7 @@ describe("the New Relic agent", function () {
       })
     })
 
-    describe("when forcing transaction ignore status", function () {
+    describe("when forcing transaction ignore status", function() {
       var agent
 
       beforeEach(function () {
@@ -315,6 +320,13 @@ describe("the New Relic agent", function () {
         expect(transaction.ignore).equal(false)
 
         expect(function () { transaction.end(); }).not.throws()
+      })
+
+      it("should ignore when setName is not called", function() {
+        var transaction = new Transaction(agent)
+        transaction.forceIgnore = true
+        agent._transactionFinished(transaction)
+        expect(transaction.ignore).equal(true)
       })
     })
 
@@ -1228,8 +1240,6 @@ describe("the New Relic agent", function () {
         nock(URL)
           .post(helper.generateCollectorPath('sql_trace_data', RUN_ID))
           .reply(200, {return_value : null})
-
-
 
       agent.harvest(function cb_harvest(error) {
         should.not.exist(error)

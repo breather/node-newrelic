@@ -8,7 +8,7 @@ var chai     = require('chai')
 describe('database query parser', function () {
   describe('SELECT SQL', function () {
     it("should parse a simple query", function () {
-      var ps = parseSql('NoSQL', "Select * from dude")
+      var ps = parseSql('NoSQL', "Select\n *\n from dude")
       should.exist(ps)
 
       should.exist(ps.type)
@@ -19,7 +19,7 @@ describe('database query parser', function () {
 
       should.exist(ps.model)
       ps.model.should.equal('dude')
-      ps.raw.should.equal('Select * from dude')
+      ps.raw.should.equal('Select\n *\n from dude')
     })
 
     it("should parse another simple query", function () {

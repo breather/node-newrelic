@@ -1,8 +1,11 @@
 'use strict'
 
+process.env.NEW_RELIC_HOME = __dirname
+
 var test   = require('tap').test
 var logger = require('../../../lib/logger')
 var helper = require('../../lib/agent_helper')
+var urltils = require('../../../lib/util/urltils')
 var params = require('../../lib/params')
 
 
@@ -10,17 +13,12 @@ var DBUSER = 'test_user'
 var DBNAME = 'agent_integration'
 
 
-test('Basic run through mysql functionality',
-     {timeout : 30 * 1000},
-     function (t) {
-  // t.plan(9);
-
-  helper.bootstrapMySQL(function cb_bootstrapMySQL(error, app) {
+test('Basic run through mysql functionality', {timeout : 30 * 1000}, function(t) {
+  helper.bootstrapMySQL(function cb_bootstrapMySQL(error) {
     // set up the instrumentation before loading MySQL
     var agent = helper.instrumentMockedAgent()
     var mysql   = require('mysql')
     var generic = require('generic-pool')
-
 
     /*
      *
@@ -34,9 +32,9 @@ test('Basic run through mysql functionality',
       max: 6,
       idleTimeoutMillis : 250,
 
-      log : function (message) { poolLogger.info(message); },
+      log : function(message) { poolLogger.info(message); },
 
-      create : function (callback) {
+      create : function(callback) {
         var client = mysql.createConnection({
           user: DBUSER,
           database : DBNAME,
@@ -44,7 +42,7 @@ test('Basic run through mysql functionality',
           port: params.mysql_port
         })
 
-        client.on('error', function (err) {
+        client.on('error', function(err) {
           poolLogger.error('MySQL connection errored out, destroying connection')
           poolLogger.error(err)
           pool.destroy(client)
@@ -97,14 +95,14 @@ test('Basic run through mysql functionality',
       return t.end()
     }
 
-    this.tearDown(function cb_tearDown() {
+    t.tearDown(function cb_tearDown() {
       pool.drain(function() {
         pool.destroyAllNow()
         helper.unloadAgent(agent)
       })
     })
 
-    t.plan(7)
+    t.plan(8)
 
     t.test('basic transaction', function testTransaction(t) {
       t.notOk(agent.getTransaction(), 'no transaction should be in play yet')
@@ -115,7 +113,7 @@ test('Basic run through mysql functionality',
           if (err) return t.fail(err)
 
           t.ok(agent.getTransaction(), 'generic-pool should not lose the transaction')
-          client.query('SELECT 1', function (err) {
+          client.query('SELECT 1', function(err) {
             if (err) return t.fail(err)
 
             t.ok(agent.getTransaction(), 'MySQL query should not lose the transaction')
@@ -123,7 +121,7 @@ test('Basic run through mysql functionality',
             agent.getTransaction().end(function checkQueries() {
               var queryKeys = Object.keys(agent.queries.samples)
               t.ok(queryKeys.length > 0, 'there should be a query sample')
-              queryKeys.forEach(function testSample (key) {
+              queryKeys.forEach(function testSample(key) {
                 var query = agent.queries.samples[key]
                 t.ok(query.total > 0, 'the samples should have positive duration')
               })
@@ -200,6 +198,53 @@ test('Basic run through mysql functionality',
       })
     })
 
+    t.test('ensure database name changes with a use statement', function(t) {
+      t.notOk(agent.getTransaction(), 'no transaction should be in play yet')
+      helper.runInTransaction(agent, function transactionInScope(txn) {
+        t.ok(agent.getTransaction(), 'we should be in a transaction')
+        withRetry.getClient(function cb_getClient(err, client) {
+          if (err) return t.fail(err)
+          client.query('create database if not exists test_db;', function (err) {
+            client.query('use test_db;', function(err) {
+              client.query('SELECT 1 + 1 AS solution', function(err) {
+                var seg = txn.trace.root.children[0].children[0].children[0].children[0].children[0]
+                t.notOk(err, 'no errors')
+                t.ok(seg, 'there is a segment')
+                t.equal(
+                  seg.parameters.host,
+                  urltils.isLocalhost(params.mysql_host)
+                    ? agent.config.getHostnameSafe()
+                    : params.mysql_host,
+                  'set host'
+                )
+                t.equal(
+                  seg.parameters.database_name,
+                  'test_db',
+                  'set database name'
+                )
+                t.equal(
+                  seg.parameters.port_path_or_id,
+                  "3306",
+                  'set port'
+                )
+                withRetry.release(client)
+                agent.getTransaction().end(function checkQueries() {
+                  var queryKeys = Object.keys(agent.queries.samples)
+                  t.ok(queryKeys.length > 0, 'there should be a query sample')
+                  queryKeys.forEach(function testSample (key) {
+                    var query = agent.queries.samples[key]
+                    t.ok(query.total > 0, 'the samples should have positive duration')
+                  })
+                  t.end()
+                })
+              })
+            })
+          })
+        })
+      })
+    })
+
+
     t.test('streaming query should be timed correctly', function testCB(t) {
       t.notOk(agent.getTransaction(), 'no transaction should be in play yet')
       helper.runInTransaction(agent, function transactionInScope() {
@@ -229,7 +274,8 @@ test('Basic run through mysql functionality',
               t.ok(results && ended, 'result and end events should occur')
               var traceRoot = transaction.trace.root
               var traceRootDuration = traceRoot.timer.getDurationInMillis()
-              var queryNodeDuration = traceRoot.children[0].timer.getDurationInMillis()
+              var segment = findSegment(traceRoot, 'Datastore/statement/MySQL/unknown/select')
+              var queryNodeDuration = segment.timer.getDurationInMillis()
               t.ok(Math.abs(duration - queryNodeDuration) < 1,
                   'query duration should be roughly be the time between query and end')
               t.ok(traceRootDuration - queryNodeDuration > 900,
@@ -341,5 +387,14 @@ test('Basic run through mysql functionality',
         })
       })
     })
-  }.bind(this))
+  })
 })
+
+function findSegment(root, segmentName) {
+  for (var i = 0; i < root.children.length; i++) {
+    var segment = root.children[i]
+    if (segment.name === segmentName) {
+      return segment
+    }
+  }
+}
